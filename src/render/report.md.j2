@@ -1,0 +1,65 @@
+# Báo cáo xu hướng: {{ report.category }}
+**Ngày chạy:** {{ report.date }} | **Model sử dụng:** Writer: `{{ report.models_used.get('writer', 'N/A') }}` (Digest: `{{ report.models_used.get('digest', 'N/A') }}`) | **Tổng chi phí:** ${{ "%.4f"|format(report.cost_usd) }} ({{ report.total_input_tokens }} in / {{ report.total_output_tokens }} out tokens)
+
+---
+
+## 🏆 TỔNG KẾT THỊ TRƯỜNG & KHUYẾN NGHỊ
+
+### 1. Bảng xếp hạng tiềm năng các Niche
+| Hạng | Niche | Điểm | Lý do đánh giá |
+| :---: | :--- | :---: | :--- |
+{% for item in report.ranking -%}
+| **#{{ item.rank }}** | **{{ item.niche }}** | `{{ item.score }}/10` | {{ item.reason }} |
+{% endfor %}
+
+### 2. Top 3 Idea sản phẩm tốt nhất toàn báo cáo
+{% for idea in report.top_ideas -%}
+{{ loop.index }}. **{{ idea.title }}**
+   - **Bán gì:** {{ idea.what }}
+   - **Cho ai:** {{ idea.for_whom }}
+   - **Vì sao nên bán bây giờ:** {{ idea.why_now }}
+   {% if idea.evidence_refs -%}
+   - **Căn cứ dữ liệu:** {% for ref in idea.evidence_refs %}[Nguồn minh chứng]({{ ref }}){% if not loop.last %}, {% endif %}{% endfor %}
+   {% endif %}
+
+{% endfor %}
+
+---
+
+{% for nr in report.niche_reports %}
+## 📦 Niche {{ loop.index }}: {{ nr.niche }}
+
+### 1. Keyword xu hướng
+| Keyword | Tín hiệu | Nguồn kiểm chứng |
+| :--- | :--- | :--- |
+{% for kw in nr.keywords -%}
+| `{{ kw.keyword }}` | {{ kw.signal }} | [Xem nguồn]({{ kw.source_url }}) |
+{% else -%}
+| *Không có dữ liệu* | *Không có dữ liệu* | - |
+{% endfor %}
+
+### 2. Phân tích thị trường
+- **Xu hướng:** **{{ nr.trend | upper }}** — {{ nr.analysis }}
+- **Chân dung khách hàng:** {{ nr.customer }}
+- **Khách hàng than phiền & vấn đề gặp phải:**
+  {% for p in nr.pain_points -%}
+  - {{ p }}
+  {% else -%}
+  - Không có dữ liệu
+  {% endfor %}
+- **Mức độ cạnh tranh:** {{ nr.competition }}
+- **Khoảng giá tham khảo:** `{{ nr.price_range }}`
+
+### 3. Đề xuất Idea sản phẩm
+| Ý tưởng | Bán cái gì | Khách hàng mục tiêu | Vì sao nên bán bây giờ |
+| :--- | :--- | :--- | :--- |
+{% for id in nr.ideas -%}
+| **{{ id.title }}** | {{ id.what }} | {{ id.for_whom }} | {{ id.why_now }} |
+{% else -%}
+| *Đang cập nhật* | - | - | - |
+{% endfor %}
+
+---
+{% endfor %}
+
+*Báo cáo được tạo tự động bởi AI Trend Research Tool. Mọi thông tin số liệu đều được dẫn chiếu trực tiếp từ nguồn thu thập thực tế.*

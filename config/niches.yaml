@@ -1,0 +1,27 @@
+category: "Quà tặng theo mùa"
+description: "Danh mục quà tặng cho các dịp lễ cuối năm và đầu năm (Halloween, Black Friday, Giáng sinh, Valentine)"
+niches:
+  - id: "christmas_gift_ideas"
+    name: "Christmas gift ideas"
+    seed_keywords:
+      - "christmas gift ideas"
+      - "christmas gifts for mom"
+      - "stocking stuffers"
+  - id: "gift_for_him"
+    name: "Gift for him"
+    seed_keywords:
+      - "gifts for him"
+      - "gifts for boyfriend"
+      - "gifts for dad"
+  - id: "personalized_gift"
+    name: "Personalized gift"
+    seed_keywords:
+      - "personalized gifts"
+      - "custom name gift"
+      - "engraved gift"
+  - id: "valentine_gift"
+    name: "Valentine gift"
+    seed_keywords:
+      - "valentine gifts for her"
+      - "valentine gifts for him"
+      - "couple gift"

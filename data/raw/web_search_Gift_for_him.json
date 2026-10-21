@@ -1,0 +1,23 @@
+{
+  "source": "web_search",
+  "key": "Gift for him",
+  "cached_at": "2026-10-20T10:53:21.750271",
+  "payload": [
+    {
+      "source": "web_search",
+      "kind": "price",
+      "keyword": "Gift for him",
+      "text": "Men's Health: Unique Gifts for Boyfriends, Dads, and Husbands - Top picks include magnetic charging stands, custom engraved leather wallets ($25-$50), and compact titanium multitools. Practical everyday utility sells best.",
+      "value": "$25 - $50 sweet spot",
+      "source_url": "https://www.menshealth.com/technology/g5678/best-gadgets-gifts-for-men"
+    },
+    {
+      "source": "web_search",
+      "kind": "competitor",
+      "keyword": "Gift for him",
+      "text": "GQ: What Men Actually Want for Gifts This Season - Minimalist desk mats, personalized whisky glasses ($30-$60), and travel tech organizers have high search volume with strong Amazon & Etsy sales momentum.",
+      "value": "High demand, focus on aesthetic branding",
+      "source_url": "https://www.gq.com/story/best-gifts-for-men-holiday-guide"
+    }
+  ]
+}

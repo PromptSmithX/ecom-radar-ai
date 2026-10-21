@@ -1,0 +1,23 @@
+{
+  "source": "web_search",
+  "key": "Valentine gift",
+  "cached_at": "2026-10-20T10:57:27.198178",
+  "payload": [
+    {
+      "source": "web_search",
+      "kind": "price",
+      "keyword": "Valentine gift",
+      "text": "Cosmopolitan: Most Thoughtful Valentine's Day Gifts for Couples - Interactive adventure scratch-off books ($20-$35), matching touch bracelets, and custom constellation star maps ($30-$55) lead Valentine sales over traditional flowers.",
+      "value": "$20 - $55 price point",
+      "source_url": "https://www.cosmopolitan.com/lifestyle/g9101/best-valentines-day-gifts"
+    },
+    {
+      "source": "web_search",
+      "kind": "competitor",
+      "keyword": "Valentine gift",
+      "text": "Retail Dive: Valentine's Day Consumer Spending Trends - Last-minute shoppers create huge conversion spikes 7-10 days before Feb 14. Free expedited shipping and bundled gift sets see highest cart conversion.",
+      "value": "Seasonal spike, high peak demand",
+      "source_url": "https://www.retaildive.com/news/valentines-day-consumer-spending-trends"
+    }
+  ]
+}

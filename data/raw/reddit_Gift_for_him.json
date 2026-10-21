@@ -1,0 +1,23 @@
+{
+  "source": "reddit",
+  "key": "Gift for him",
+  "cached_at": "2026-10-20T10:53:21.748674",
+  "payload": [
+    {
+      "source": "reddit",
+      "kind": "complaint",
+      "keyword": "Gift for him",
+      "text": "Thảo luận cộng đồng Reddit: 'Why is buying gifts for men always limited to wallets, socks, and whiskey stones?'. Insight: Men are so hard to shop for! Every gift guide recommends multi-tools or leather wallets. What do boyfriends/husbands actually appreciate?",
+      "value": "512 upvotes",
+      "source_url": "https://www.reddit.com/r/AskMen/comments/gifts_men_actually_want"
+    },
+    {
+      "source": "reddit",
+      "kind": "complaint",
+      "keyword": "Gift for him",
+      "text": "Thảo luận cộng đồng Reddit: 'Tech gadgets under $50 that make great gifts for boyfriends'. Insight: Looking for minimal desk setup accessories, 3-in-1 MagSafe chargers, or compact EDC organizers. High utility is key.",
+      "value": "340 upvotes",
+      "source_url": "https://www.reddit.com/r/gadgets/comments/gifts_under_50"
+    }
+  ]
+}

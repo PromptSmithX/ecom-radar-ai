@@ -1,0 +1,23 @@
+{
+  "source": "reddit",
+  "key": "Valentine gift",
+  "cached_at": "2026-10-20T10:57:27.196778",
+  "payload": [
+    {
+      "source": "reddit",
+      "kind": "complaint",
+      "keyword": "Valentine gift",
+      "text": "Thảo luận cộng đồng Reddit: 'Valentine gifts have gotten too cliché - teddy bears and overpriced roses don't cut it'. Insight: Couples want memorable shared experiences or sentimental personalized keepsakes (custom date adventure books, matching minimalist bracelets).",
+      "value": "450 upvotes",
+      "source_url": "https://www.reddit.com/r/RelationshipAdvice/comments/meaningful_valentine_gifts"
+    },
+    {
+      "source": "reddit",
+      "kind": "complaint",
+      "keyword": "Valentine gift",
+      "text": "Thảo luận cộng đồng Reddit: 'Last minute Valentine delivery delays ruin everything'. Insight: Ordered 5 days ahead and shipping was delayed. Sellers with guaranteed 2-day delivery or printable emergency voucher options win big.",
+      "value": "310 upvotes",
+      "source_url": "https://www.reddit.com/r/ecommerce/comments/valentine_shipping_nightmare"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+llm:
+  digest:
+    provider: gemini
+    model: gemini-2.5-flash
+  writer:
+    provider: gemini
+    model: gemini-2.5-flash
+  summary:
+    provider: gemini
+    model: gemini-2.5-flash
+
+collectors:
+  google_trends:
+    hl: "en-US"
+    tz: 360
+    timeframe: "today 3-m"
+    sleep_seconds: 2
+    max_retries: 3
+  reddit:
+    limit: 10
+    sort: "relevance"
+    time_filter: "month"
+  web_search:
+    max_results: 5
+  google_suggest:
+    client: "firefox"
+    hl: "en"
+
+cache:
+  enabled: true
+  ttl_days: 1
+  raw_dir: "data/raw"
+  evidence_dir: "data/evidence"
+
+reporting:
+  output_dir: "reports"
+  template_path: "src/render/report.md.j2"

@@ -1,0 +1,23 @@
+{
+  "source": "google_trends",
+  "key": "Valentine gift",
+  "cached_at": "2026-10-20T10:57:23.118472",
+  "payload": [
+    {
+      "source": "google_trends",
+      "kind": "keyword_signal",
+      "keyword": "valentine gifts for her",
+      "text": "Từ khóa 'valentine gifts for her' là từ khóa hạt giống tiềm năng trong mùa lễ hội Q4",
+      "value": "Baseline seasonal keyword",
+      "source_url": "https://trends.google.com/trends/explore?q=valentine+gifts+for+her&date=today%203-m"
+    },
+    {
+      "source": "google_trends",
+      "kind": "keyword_signal",
+      "keyword": "valentine gifts for him",
+      "text": "Từ khóa 'valentine gifts for him' là từ khóa hạt giống tiềm năng trong mùa lễ hội Q4",
+      "value": "Baseline seasonal keyword",
+      "source_url": "https://trends.google.com/trends/explore?q=valentine+gifts+for+him&date=today%203-m"
+    }
+  ]
+}

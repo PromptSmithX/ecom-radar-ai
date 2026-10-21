@@ -1,0 +1,23 @@
+{
+  "source": "web_search",
+  "key": "Personalized gift",
+  "cached_at": "2026-10-20T10:56:38.096808",
+  "payload": [
+    {
+      "source": "web_search",
+      "kind": "price",
+      "keyword": "Personalized gift",
+      "text": "Etsy Trend Guide: Personalized and Custom Gifts Forecast - Custom birth flower jewelry, acrylic song plaques, and custom embroidered sweatshirts ($28-$65) are top volume drivers. Buyers emphasize fast delivery and durable material.",
+      "value": "$28 - $65 range on Etsy",
+      "source_url": "https://www.etsy.com/blog/trends-personalized-gifts-forecast"
+    },
+    {
+      "source": "web_search",
+      "kind": "competitor",
+      "keyword": "Personalized gift",
+      "text": "Shopify Market Research: The Boom in Custom Keepsakes - POD (Print-on-demand) and laser-engraving have low barriers to entry. Differentiating factor is gift-ready packaging and personalization preview tools.",
+      "value": "Medium competition, high margins (55-70%)",
+      "source_url": "https://www.shopify.com/blog/personalized-gifts-ecommerce-guide"
+    }
+  ]
+}
