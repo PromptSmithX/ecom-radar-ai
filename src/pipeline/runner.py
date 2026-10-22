@@ -34,6 +34,7 @@ class PipelineRunner:
         trend_provider: Optional[str] = None,
         api_key_serpapi: Optional[str] = None,
         use_cache: bool = True,
+        use_tavily: bool = False,
     ):
         self.digest_provider = digest_provider or settings.llm.digest.provider
         self.digest_model = digest_model or settings.llm.digest.model
@@ -47,6 +48,7 @@ class PipelineRunner:
         self.trend_provider = trend_provider or settings.collectors.trend_provider
         self.api_key_serpapi = api_key_serpapi or settings.serpapi_api_key
         self.use_cache = use_cache
+        self.use_tavily = use_tavily
 
     def _resolve_llm(self, provider: str, model: str):
         key = self.api_key_gemini if provider == "gemini" else self.api_key_openai
@@ -94,7 +96,7 @@ class PipelineRunner:
             notify("COLLECT", base_fraction + (step_span * 0.1), f"[{idx+1}/{niche_count}] Đang thu thập dữ liệu thô: {niche.name}...")
             raw_evidence = collect_for_niche(
                 niche,
-                collectors=build_collectors(self.trend_provider, self.api_key_serpapi),
+                collectors=build_collectors(self.trend_provider, self.api_key_serpapi, use_tavily=self.use_tavily),
                 use_cache=self.use_cache,
             )
 

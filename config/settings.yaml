@@ -25,9 +25,15 @@ collectors:
     cooldown_minutes: 60
     include_interest_over_time: false
   reddit:
+    request_delay: 3.0
+    limit: 10
+    sort: "relevance"
+    time_filter: "month"
+    use_tavily: false
     max_results_per_query: 5
+    max_queries_per_intent: 1
     time_range: "year"
-    search_depth: "advanced"
+    search_depth: "basic"
     preferred_subreddits:
       - "gifts"
       - "GiftIdeas"

@@ -43,10 +43,19 @@ class SerpApiConfig(BaseModel):
 
 
 class RedditConfig(BaseModel):
+    # Reddit JSON public endpoint settings (default backend, no API key needed)
+    request_delay: float = 3.0  # seconds between JSON requests to avoid rate limiting
+    limit: int = 10  # max results per JSON search query
+    sort: str = "relevance"  # relevance | hot | top | new | comments
+    time_filter: str = "month"  # hour | day | week | month | year | all
+
+    # Tavily settings (optional, only used when use_tavily=True)
+    use_tavily: bool = False
     max_results_per_query: int = 5
     time_range: str = "year"
-    search_depth: str = "advanced"
-    max_queries_per_intent: Optional[int] = None
+    search_depth: str = "basic"  # basic (1 credit) | advanced (2 credits)
+
+    max_queries_per_intent: int = 1  # templates per intent (reduces total queries)
     preferred_subreddits: List[str] = Field(
         default_factory=lambda: ["gifts", "GiftIdeas", "BuyItForLife", "AskMen", "AskWomen", "Etsy"]
     )
@@ -70,9 +79,6 @@ class RedditConfig(BaseModel):
             ],
         }
     )
-    limit: Optional[int] = 10
-    sort: Optional[str] = "relevance"
-    time_filter: Optional[str] = "month"
 
 
 class WebSearchConfig(BaseModel):

@@ -10,7 +10,7 @@ from src.collectors.google_suggest import GoogleSuggestCollector
 from src.collectors.google_trends import COOLDOWN_META_KEY, GoogleTrendsCollector
 from src.collectors.reddit import RedditCollector
 from src.collectors.web_search import WebSearchCollector
-from src.collectors.registry import collect_for_niche, COLLECTORS
+from src.collectors.registry import build_collectors, collect_for_niche, COLLECTORS
 from src.core.cache import cache
 from src.core.models import Evidence, Niche
 
@@ -42,21 +42,32 @@ def test_google_suggest_collector(sample_niche):
         assert item.kind == "keyword_signal"
 
 
-@patch("tavily.TavilyClient")
-def test_reddit_collector(mock_tavily_cls, sample_niche):
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "Best Christmas gifts under $50",
-                "url": "https://www.reddit.com/r/gifts/comments/abc123/best_gifts/",
-                "content": "Authentic feedback about quality gifts that do not break the bank for the holidays.",
-                "score": 0.9,
-            }
-        ]
+@patch("src.collectors.reddit.httpx.get")
+def test_reddit_collector(mock_get, sample_niche):
+    """RedditCollector with JSON backend (default) parses results correctly."""
+    json_data = {
+        "data": {
+            "children": [
+                {
+                    "data": {
+                        "permalink": "/r/gifts/comments/abc123/best_gifts/",
+                        "title": "Best Christmas gifts under $50",
+                        "selftext": "Authentic feedback about quality gifts that do not break the bank for the holidays.",
+                        "score": 42,
+                        "subreddit": "gifts",
+                    }
+                }
+            ]
+        }
     }
-    collector = RedditCollector(api_key="tvly-test-key")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = json_data
+    mock_resp.raise_for_status.return_value = None
+    mock_get.return_value = mock_resp
+
+    collector = RedditCollector(use_tavily=False)
+    collector.request_delay = 0
     results = collector.collect(sample_niche, use_cache=False)
     assert isinstance(results, list)
     assert len(results) > 0
@@ -148,6 +159,28 @@ def test_google_trends_skips_real_call_during_cooldown(cleanup_trends_cooldown):
 
     assert len(results) > 0
     assert all(ev.is_mock for ev in results)
+
+
+def test_build_collectors_excludes_websearch_without_tavily():
+    """When use_tavily=False (default), WebSearchCollector is not included."""
+    collectors = build_collectors(use_tavily=False)
+    collector_types = [type(c) for c in collectors]
+    assert WebSearchCollector not in collector_types
+    assert RedditCollector in collector_types
+    # Verify RedditCollector has use_tavily=False
+    reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
+    assert reddit.use_tavily is False
+
+
+def test_build_collectors_includes_websearch_with_tavily():
+    """When use_tavily=True, WebSearchCollector is included."""
+    collectors = build_collectors(use_tavily=True)
+    collector_types = [type(c) for c in collectors]
+    assert WebSearchCollector in collector_types
+    assert RedditCollector in collector_types
+    # Verify RedditCollector has use_tavily=True
+    reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
+    assert reddit.use_tavily is True
 
 
 def test_registry_collect_for_niche(sample_niche):

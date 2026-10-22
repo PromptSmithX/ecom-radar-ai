@@ -30,9 +30,17 @@ TREND_PROVIDERS: Dict[str, Type[Collector]] = {
 }
 
 
-def build_collectors(trend_provider: Optional[str] = None, trend_api_key: Optional[str] = None) -> List[Collector]:
+def build_collectors(
+    trend_provider: Optional[str] = None,
+    trend_api_key: Optional[str] = None,
+    use_tavily: bool = False,
+) -> List[Collector]:
     """Instantiates the canonical collector list, substituting whichever trend provider
-    (Google Trends vs SerpApi) was requested in place of the default GoogleTrendsCollector slot."""
+    (Google Trends vs SerpApi) was requested in place of the default GoogleTrendsCollector slot.
+
+    When use_tavily=False (default), WebSearchCollector is excluded (it only uses Tavily)
+    and RedditCollector uses the public JSON endpoint only.
+    """
     trend_provider = trend_provider or settings.collectors.trend_provider
     trend_cls = TREND_PROVIDERS.get(trend_provider, GoogleTrendsCollector)
 
@@ -40,6 +48,12 @@ def build_collectors(trend_provider: Optional[str] = None, trend_api_key: Option
     for cls in COLLECTORS:
         if cls in TREND_PROVIDERS.values():
             instances.append(trend_cls(api_key=trend_api_key) if trend_provider == "serpapi" else trend_cls())
+        elif cls is RedditCollector:
+            instances.append(cls(use_tavily=use_tavily))
+        elif cls is WebSearchCollector:
+            if use_tavily:
+                instances.append(cls())
+            # else: skip WebSearchCollector — it only uses Tavily
         else:
             instances.append(cls())
     return instances

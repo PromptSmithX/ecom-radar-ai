@@ -75,6 +75,7 @@ def run(
     digest_model: Optional[str] = typer.Option(None, "--digest-model", help="Tên model digest"),
     trend_source: Optional[str] = typer.Option(None, "--trend-source", help="Nguồn dữ liệu Trend: google_trends | serpapi"),
     use_cache: bool = typer.Option(True, "--cache/--no-cache", help="Có sử dụng dữ liệu đã cache hay không"),
+    use_tavily: bool = typer.Option(False, "--tavily/--no-tavily", help="Bật Tavily cho Web Search + Reddit bổ sung (tốn credit)"),
 ):
     """Executes the full AI trend research pipeline and outputs a Markdown report."""
     category, all_niches = load_niches()
@@ -109,6 +110,11 @@ def run(
         console.print("[yellow]   Hãy dán key lấy từ serpapi.com vào .env, hoặc dùng '--trend-source google_trends' để quay lại pytrends.[/yellow]")
         raise typer.Exit(1)
 
+    if use_tavily and not settings.tavily_api_key:
+        console.print("[bold red]❌ Lỗi: --tavily được bật nhưng TAVILY_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy dán key lấy từ tavily.com vào .env, hoặc bỏ cờ --tavily để chỉ dùng Reddit JSON công khai.[/yellow]")
+        raise typer.Exit(1)
+
     d_provider = digest_provider or (w_provider if w_provider == "mock" else settings.llm.digest.provider)
     if d_provider == "gemini" and not settings.gemini_api_key:
         console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
@@ -130,12 +136,14 @@ def run(
         summary_model=writer_model,
         trend_provider=trend_provider,
         use_cache=use_cache,
+        use_tavily=use_tavily,
     )
 
     console.print(f"\n[bold green]=== BẮT ĐẦU NGHIÊN CỨU XU HƯỚNG ===[/bold green]")
     console.print(f"Danh mục: [bold cyan]{category}[/bold cyan]")
     console.print(f"Số lượng Niche: [bold cyan]{len(selected_niches)}[/bold cyan]")
-    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
+    tavily_status = "BẬT" if use_tavily else "TẮT"
+    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Tavily: [bold]{tavily_status}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
 
     def progress_callback(stage: str, fraction: float, msg: str):
         pct = int(fraction * 100)

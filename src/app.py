@@ -111,6 +111,14 @@ with st.sidebar:
         help="Dùng SerpApi khi Google Trends (pytrends) bị rate limit 429 liên tục.",
     )
 
+    st.markdown("---")
+    st.markdown("#### 🔍 Tavily (Tùy chọn)")
+    use_tavily = st.checkbox(
+        "Dùng Tavily (Web Search + Reddit bổ sung)",
+        value=False,
+        help="Bật để dùng Tavily API cho Web Search và bổ sung thêm Reddit data. Tốn credit Tavily. Mặc định Reddit dùng endpoint JSON công khai miễn phí.",
+    )
+
     with st.expander("🔑 Cấu hình API Keys"):
         gemini_key = st.text_input(
             "Gemini API Key:",
@@ -123,12 +131,15 @@ with st.sidebar:
             value=settings.openai_api_key or "",
             type="password",
         )
-        tavily_key = st.text_input(
-            "Tavily API Key (Tùy chọn):",
-            value=settings.tavily_api_key or "",
-            type="password",
-            help="Dùng cho Web Search thời gian thực. Bỏ trống sẽ dùng dữ liệu đối chuẩn có sẵn.",
-        )
+        if use_tavily:
+            tavily_key = st.text_input(
+                "Tavily API Key:",
+                value=settings.tavily_api_key or "",
+                type="password",
+                help="Cần khi bật Tavily ở trên. Lấy tại tavily.com.",
+            )
+        else:
+            tavily_key = settings.tavily_api_key or ""
         serpapi_key = st.text_input(
             "SerpApi Key (Tùy chọn):",
             value=settings.serpapi_api_key or "",
@@ -173,6 +184,10 @@ if run_button:
         if trend_provider == "serpapi" and not active_serpapi_key:
             st.warning("⚠️ Chưa phát hiện SerpApi Key. Sẽ bỏ qua thu thập Trend (evidence rỗng) cho bước này, các nguồn khác vẫn chạy bình thường.")
 
+        active_tavily_key = tavily_key.strip() if tavily_key else settings.tavily_api_key
+        if use_tavily and not active_tavily_key:
+            st.warning("⚠️ Bật Tavily nhưng chưa có API Key. Web Search và Reddit bổ sung sẽ không hoạt động.")
+
         progress_container = st.container()
         with progress_container:
             st.markdown("#### ⏳ Tiến trình xử lý")
@@ -195,6 +210,7 @@ if run_button:
             trend_provider=trend_provider,
             api_key_serpapi=active_serpapi_key,
             use_cache=use_cache,
+            use_tavily=use_tavily,
         )
 
         try:
