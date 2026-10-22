@@ -10,6 +10,7 @@ llm:
     model: gemini-2.5-flash
 
 collectors:
+  trend_provider: "google_trends"  # "google_trends" | "serpapi"
   google_trends:
     hl: "en-US"
     tz: 360
@@ -17,6 +18,12 @@ collectors:
     sleep_seconds: 2
     max_retries: 3
     cooldown_minutes: 60
+  serpapi:
+    hl: "en"
+    geo: "US"
+    date: "today 3-m"
+    cooldown_minutes: 60
+    include_interest_over_time: false
   reddit:
     max_results_per_query: 5
     time_range: "year"

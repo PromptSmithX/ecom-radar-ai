@@ -50,6 +50,9 @@ Hãy tuân thủ triệt để các quy tắc trong system prompt và trả về
 
     for attempt in range(max_retries + 1):
         try:
+            if attempt > 0:
+                import time
+                time.sleep(2.0 * attempt)
             curr_prompt = user_prompt if attempt == 0 else f"{user_prompt}\n\nLƯU Ý LẦN TRƯỚC BỊ LỖI PARSE JSON: {last_error}. Vui lòng trả về đúng chuẩn JSON hợp lệ."
             result = llm.generate(system=system_prompt, prompt=curr_prompt, json_mode=True)
             total_usage.input_tokens += result.usage.input_tokens
@@ -58,8 +61,13 @@ Hãy tuân thủ triệt để các quy tắc trong system prompt và trả về
             cleaned_text = clean_json_text(result.text)
             data = json.loads(cleaned_text)
 
-            # Ensure niche name is preserved
+            # Ensure niche name is preserved and score is coerced to integer
             data["niche"] = niche.name
+            if "score" in data:
+                try:
+                    data["score"] = round(float(data["score"]))
+                except Exception:
+                    data["score"] = 5
             report = NicheReport(**data)
 
             # Post-generation anti-hallucination validation

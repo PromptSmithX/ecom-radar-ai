@@ -13,11 +13,21 @@ class Niche(BaseModel):
 
 class Evidence(BaseModel):
     source: str = Field(..., description="Nguồn: google_trends | reddit | web_search | google_suggest")
-    kind: str = Field(..., description="Loại tín hiệu: keyword_signal | complaint | price | competitor | general")
+    kind: str = Field(default="general", description="Loại tín hiệu: keyword_signal | complaint | price | competitor | general")
     keyword: Optional[str] = Field(None, description="Từ khóa liên quan")
     text: str = Field(..., description="Nội dung tóm tắt/trích dẫn đã chuẩn hóa")
     value: Optional[str] = Field(None, description="Số liệu cụ thể nếu có, ví dụ +250% rising, 85/100 interest")
     source_url: str = Field(..., description="URL nguồn kiểm chứng bắt buộc")
+
+    # Mở rộng cho Reddit và truy vết nguồn
+    intent: Optional[str] = Field(None, description="Nhãn của query đã dùng: ask | pain | regret | recommend")
+    subreddit: Optional[str] = Field(None, description="Tên subreddit")
+    post_id: Optional[str] = Field(None, description="ID của thread bài viết Reddit")
+    title: Optional[str] = Field(None, description="Tiêu đề bài viết nguyên văn từ nguồn")
+    snippet: Optional[str] = Field(None, description="Nội dung trích dẫn nguyên văn tối đa 500 ký tự")
+    relevance: Optional[float] = Field(None, description="Score đo lường độ liên quan từ search engine")
+    query_used: Optional[str] = Field(None, description="Query đã sử dụng để tìm kiếm")
+    is_mock: bool = Field(default=False, description="Đánh dấu dữ liệu chạy thử/mock")
 
 
 class KeywordSignal(BaseModel):

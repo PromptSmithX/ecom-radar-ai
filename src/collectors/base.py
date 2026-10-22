@@ -11,7 +11,7 @@ class Collector(ABC):
     name: str = "base"
 
     @abstractmethod
-    def collect(self, niche: Niche) -> List[Evidence]:
+    def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
         """Collects evidence for the given niche.
         Must return a list of Evidence items, each containing a valid source_url.
         """

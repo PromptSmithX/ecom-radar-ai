@@ -34,6 +34,14 @@ class GoogleTrendsConfig(BaseModel):
     cooldown_minutes: int = 60
 
 
+class SerpApiConfig(BaseModel):
+    hl: str = "en"
+    geo: str = "US"
+    date: str = "today 3-m"
+    cooldown_minutes: int = 60
+    include_interest_over_time: bool = False
+
+
 class RedditConfig(BaseModel):
     max_results_per_query: int = 5
     time_range: str = "year"
@@ -77,7 +85,9 @@ class GoogleSuggestConfig(BaseModel):
 
 
 class CollectorsConfig(BaseModel):
+    trend_provider: str = "google_trends"  # "google_trends" | "serpapi"
     google_trends: GoogleTrendsConfig = Field(default_factory=GoogleTrendsConfig)
+    serpapi: SerpApiConfig = Field(default_factory=SerpApiConfig)
     reddit: RedditConfig = Field(default_factory=RedditConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     google_suggest: GoogleSuggestConfig = Field(default_factory=GoogleSuggestConfig)
@@ -106,6 +116,7 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
     tavily_api_key: Optional[str] = Field(default=None, alias="TAVILY_API_KEY")
+    serpapi_api_key: Optional[str] = Field(default=None, alias="SERPAPI_API_KEY")
     reddit_user_agent: str = Field(default="trend-research/0.1 (by ecomm-researcher)", alias="REDDIT_USER_AGENT")
 
     # Settings from YAML

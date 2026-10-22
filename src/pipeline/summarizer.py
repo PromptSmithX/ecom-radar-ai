@@ -57,6 +57,14 @@ Hãy xếp hạng tất cả các niche và chọn ra đúng 3 ý tưởng sản
             raw_rankings = data.get("ranking", [])
             raw_top_ideas = data.get("top_ideas", [])
 
+            # Coerce score to integer if LLM returns float like 8.5
+            for item in raw_rankings:
+                if "score" in item:
+                    try:
+                        item["score"] = round(float(item["score"]))
+                    except Exception:
+                        item["score"] = 5
+
             rankings = [RankingItem(**item) for item in raw_rankings]
             top_ideas = [Idea(**item) for item in raw_top_ideas]
 

@@ -101,6 +101,16 @@ with st.sidebar:
     default_model = "gemini-2.5-flash" if writer_provider == "gemini" else ("gpt-4o-mini" if writer_provider == "openai" else "mock-model")
     writer_model = st.text_input("Tên Model:", value=default_model)
 
+    st.markdown("---")
+    st.markdown("#### 📈 Nguồn dữ liệu Trend")
+    trend_provider = st.selectbox(
+        "Chọn nguồn Google Trends:",
+        options=["google_trends", "serpapi"],
+        index=0 if settings.collectors.trend_provider != "serpapi" else 1,
+        format_func=lambda v: "Google Trends (pytrends - miễn phí, dễ bị 429)" if v == "google_trends" else "SerpApi (free tier 250 request/tháng)",
+        help="Dùng SerpApi khi Google Trends (pytrends) bị rate limit 429 liên tục.",
+    )
+
     with st.expander("🔑 Cấu hình API Keys"):
         gemini_key = st.text_input(
             "Gemini API Key:",
@@ -118,6 +128,12 @@ with st.sidebar:
             value=settings.tavily_api_key or "",
             type="password",
             help="Dùng cho Web Search thời gian thực. Bỏ trống sẽ dùng dữ liệu đối chuẩn có sẵn.",
+        )
+        serpapi_key = st.text_input(
+            "SerpApi Key (Tùy chọn):",
+            value=settings.serpapi_api_key or "",
+            type="password",
+            help="Lấy tại serpapi.com. Chỉ cần khi chọn nguồn Trend 'SerpApi' ở trên. Free tier 250 request/tháng.",
         )
 
     use_cache = st.checkbox("Sử dụng Cache (Chạy nhanh & Tiết kiệm)", value=True)
@@ -145,6 +161,7 @@ if run_button:
         # Check API key if not mock
         active_gemini_key = gemini_key.strip() if gemini_key else settings.gemini_api_key
         active_openai_key = openai_key.strip() if openai_key else settings.openai_api_key
+        active_serpapi_key = serpapi_key.strip() if serpapi_key else settings.serpapi_api_key
 
         if writer_provider == "gemini" and not active_gemini_key:
             st.warning("⚠️ Chưa phát hiện Gemini API Key. Tự động chuyển sang chế độ Demo (Mock LLM) để minh họa.")
@@ -152,6 +169,9 @@ if run_button:
         elif writer_provider == "openai" and not active_openai_key:
             st.warning("⚠️ Chưa phát hiện OpenAI API Key. Tự động chuyển sang chế độ Demo (Mock LLM) để minh họa.")
             writer_provider = "mock"
+
+        if trend_provider == "serpapi" and not active_serpapi_key:
+            st.warning("⚠️ Chưa phát hiện SerpApi Key. Sẽ bỏ qua thu thập Trend (evidence rỗng) cho bước này, các nguồn khác vẫn chạy bình thường.")
 
         progress_container = st.container()
         with progress_container:
@@ -172,6 +192,8 @@ if run_button:
             summary_model=writer_model,
             api_key_gemini=active_gemini_key,
             api_key_openai=active_openai_key,
+            trend_provider=trend_provider,
+            api_key_serpapi=active_serpapi_key,
             use_cache=use_cache,
         )
 
@@ -275,7 +297,7 @@ with tab_about:
 - **Mục tiêu:** Tự động hóa quá trình nghiên cứu xu hướng và tìm kiếm ý tưởng sản phẩm e-commerce.
 - **Nguồn dữ liệu:**
   1. **Google Autocomplete:** Gợi ý từ khóa liên quan thời gian thực.
-  2. **Google Trends:** Chỉ số mức độ quan tâm và các từ khóa đang bứt phá (breakout/rising).
+  2. **Google Trends:** Chỉ số mức độ quan tâm và các từ khóa đang bứt phá (breakout/rising). Có thể chọn lấy qua **pytrends** (miễn phí, dễ bị 429) hoặc **SerpApi** (free tier 250 request/tháng, ổn định hơn) ở thanh bên trái.
   3. **Reddit Community:** Trích xuất các khó khăn, than phiền thực tế từ người dùng (`r/gifts`, `r/BuyItForLife`, `r/AskMen`...).
   4. **Web Search / Market Benchmarks:** Khảo sát đối thủ, mức giá thị trường.
 - **Nguyên tắc chống bịa số:** Mọi số liệu trong báo cáo đều được trích xuất từ dữ liệu thô, nếu thiếu sẽ hiển thị *"Không có dữ liệu"*.

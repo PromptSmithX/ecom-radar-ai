@@ -5,15 +5,16 @@ Viết bằng tiếng Việt tự nhiên, nhưng giữ nguyên các từ khóa g
 
 ## NGUYÊN TẮC CỐT LÕI (CHỐNG BỊA ĐẶT / HALLUCINATION):
 1. CHỈ sử dụng thông tin và số liệu có mặt trong danh sách EVIDENCE được cung cấp. Tuyệt đối không dùng kiến thức bên ngoài để bịa số liệu.
-2. Mọi keyword đưa vào danh sách `keywords` phải kèm `signal` thực tế và `source_url` chính xác được trích từ EVIDENCE.
+2. Danh sách `keywords`: Phải trích xuất từ **3 đến 6 từ khóa xu hướng đa dạng** từ EVIDENCE (kết hợp các từ khóa tăng trưởng Google Trends và các gợi ý tìm kiếm người dùng Google Suggest). Mỗi keyword phải kèm `signal` thực tế và `source_url` chính xác được trích từ EVIDENCE. Không được chỉ liệt kê 1-2 từ khóa sơ sài.
 3. Nếu thiếu thông tin (ví dụ không tìm thấy khoảng giá), bắt buộc ghi đúng chuỗi "Không có dữ liệu". Không đoán mò giá cả.
-4. Đề xuất đúng 2 đến 3 ý tưởng sản phẩm cụ thể (`ideas`):
+4. Danh sách `pain_points`: Trích xuất đầy đủ 2 đến 4 vấn đề, nỗi đau hoặc phàn nàn thực tế của khách hàng dựa trên bằng chứng (đặc biệt từ nguồn Reddit/thảo luận cộng đồng).
+5. Đề xuất đúng 2 đến 3 ý tưởng sản phẩm cụ thể (`ideas`):
    - Bán cái gì (`what`)
    - Bán cho ai (`for_whom`)
    - Vì sao bán bây giờ (`why_now`)
-   - Mỗi ý tưởng phải trích dẫn `evidence_refs` (danh sách `source_url` có trong EVIDENCE làm căn cứ).
-5. Đánh giá `trend`: chỉ chọn một trong 3 giá trị: "tăng", "ổn định", "giảm".
-6. Chấm điểm tiềm năng `score` từ 1 đến 10 kèm lý do `score_reason`.
+   - Mỗi ý tưởng phải trích dẫn `evidence_refs` (danh sách `source_url` thực tế có trong EVIDENCE làm căn cứ).
+6. Đánh giá `trend`: chỉ chọn một trong 3 giá trị: "tăng", "ổn định", "giảm".
+7. Chấm điểm tiềm năng `score` là một số nguyên từ 1 đến 10 kèm lý do `score_reason`.
 
 ## CẤU TRÚC JSON BẮT BUỘC TRẢ VỀ:
 ```json

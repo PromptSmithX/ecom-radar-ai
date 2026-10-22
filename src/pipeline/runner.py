@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
-from src.collectors.registry import collect_for_niche
+from src.collectors.registry import build_collectors, collect_for_niche
 from src.core.config import load_niches, settings
 from src.core.models import FinalReport, Niche, NicheReport
 from src.llm.cost import calculate_cost
@@ -31,6 +31,8 @@ class PipelineRunner:
         summary_model: Optional[str] = None,
         api_key_gemini: Optional[str] = None,
         api_key_openai: Optional[str] = None,
+        trend_provider: Optional[str] = None,
+        api_key_serpapi: Optional[str] = None,
         use_cache: bool = True,
     ):
         self.digest_provider = digest_provider or settings.llm.digest.provider
@@ -42,6 +44,8 @@ class PipelineRunner:
 
         self.api_key_gemini = api_key_gemini or settings.gemini_api_key
         self.api_key_openai = api_key_openai or settings.openai_api_key
+        self.trend_provider = trend_provider or settings.collectors.trend_provider
+        self.api_key_serpapi = api_key_serpapi or settings.serpapi_api_key
         self.use_cache = use_cache
 
     def _resolve_llm(self, provider: str, model: str):
@@ -88,7 +92,11 @@ class PipelineRunner:
 
             # Step 1: Collect
             notify("COLLECT", base_fraction + (step_span * 0.1), f"[{idx+1}/{niche_count}] Đang thu thập dữ liệu thô: {niche.name}...")
-            raw_evidence = collect_for_niche(niche)
+            raw_evidence = collect_for_niche(
+                niche,
+                collectors=build_collectors(self.trend_provider, self.api_key_serpapi),
+                use_cache=self.use_cache,
+            )
 
             # Step 2: Digest
             notify("DIGEST", base_fraction + (step_span * 0.4), f"[{idx+1}/{niche_count}] Đang chuẩn hóa Evidence Pack: {niche.name}...")
