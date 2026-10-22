@@ -6,10 +6,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Đảm bảo thư mục gốc dự án luôn nằm trong sys.path
+# Đảm bảo thư mục gốc dự án luôn nằm trong sys.path và console hỗ trợ UTF-8
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 import typer
 from rich.console import Console
@@ -81,19 +87,32 @@ def run(
 
     # Determine default provider
     w_provider = writer_provider or settings.llm.writer.provider
-    # If no API key is available, notify and fallback to mock
+
+    # Check API key availability — warn loudly, do NOT silently fall back to mock
+    missing_key = False
     if w_provider == "gemini" and not settings.gemini_api_key:
-        console.print("[yellow]Cảnh báo: GEMINI_API_KEY chưa cấu hình. Tự động chuyển sang chế độ test 'mock'.[/yellow]")
-        w_provider = "mock"
+        console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy chạy lại sau khi đặt key, hoặc dùng '--writer mock' nếu chỉ muốn thử nghiệm.[/yellow]")
+        missing_key = True
     elif w_provider == "openai" and not settings.openai_api_key:
-        console.print("[yellow]Cảnh báo: OPENAI_API_KEY chưa cấu hình. Tự động chuyển sang chế độ test 'mock'.[/yellow]")
-        w_provider = "mock"
+        console.print("[bold red]❌ Lỗi: OPENAI_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy chạy lại sau khi đặt key, hoặc dùng '--writer mock' nếu chỉ muốn thử nghiệm.[/yellow]")
+        missing_key = True
+
+    if missing_key:
+        raise typer.Exit(1)
 
     d_provider = digest_provider or (w_provider if w_provider == "mock" else settings.llm.digest.provider)
     if d_provider == "gemini" and not settings.gemini_api_key:
-        d_provider = "mock"
+        console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
+        raise typer.Exit(1)
     elif d_provider == "openai" and not settings.openai_api_key:
-        d_provider = "mock"
+        console.print("[bold red]❌ Lỗi: OPENAI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
+        raise typer.Exit(1)
+
+    # When using mock, display a clear warning so the user knows output is not real data
+    if w_provider == "mock":
+        console.print("[bold yellow]⚠️  Chế độ MOCK — báo cáo sẽ chứa dữ liệu mẫu, không dùng để ra quyết định kinh doanh.[/bold yellow]\n")
 
     runner = PipelineRunner(
         digest_provider=d_provider,

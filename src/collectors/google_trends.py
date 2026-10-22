@@ -24,17 +24,18 @@ class GoogleTrendsCollector(Collector):
         self.sleep_seconds = settings.collectors.google_trends.sleep_seconds
         self.max_retries = settings.collectors.google_trends.max_retries
 
-    def collect(self, niche: Niche) -> List[Evidence]:
+    def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
         evidence_list: List[Evidence] = []
 
-        # 1. Check cache first
-        cached_data = cache.get_raw(self.name, niche.name)
-        if cached_data is not None:
-            logger.info(f"Loaded Google Trends data from cache for niche: {niche.name}")
-            return [Evidence(**item) for item in cached_data]
+        # 1. Check cache first if enabled
+        if use_cache:
+            cached_data = cache.get_raw(self.name, niche.name)
+            if cached_data is not None:
+                logger.info(f"Loaded Google Trends data from cache for niche: {niche.name}")
+                return [Evidence(**item) for item in cached_data]
 
         raw_results = []
-        kw_list = niche.seed_keywords[:2] if niche.seed_keywords else [niche.name]
+        kw_list = niche.seed_keywords if niche.seed_keywords else [niche.name]
 
         try:
             pytrend = TrendReq(hl=self.hl, tz=self.tz, timeout=(10, 25))
@@ -42,7 +43,10 @@ class GoogleTrendsCollector(Collector):
             logger.warning(f"Could not initialize TrendReq: {e}")
             return []
 
+        rate_limited = False
         for kw in kw_list:
+            if rate_limited:
+                break
             time.sleep(self.sleep_seconds)
             encoded_kw = urllib.parse.quote_plus(kw)
             trend_url = f"https://trends.google.com/trends/explore?q={encoded_kw}&date=today%203-m"
@@ -94,7 +98,12 @@ class GoogleTrendsCollector(Collector):
                                     raw_results.append(ev.model_dump())
                     break
                 except Exception as e:
-                    logger.warning(f"Google Trends query '{kw}' attempt {attempt+1} failed: {e}")
+                    err_msg = str(e)
+                    logger.warning(f"Google Trends query '{kw}' attempt {attempt+1} failed: {err_msg}")
+                    if "429" in err_msg:
+                        logger.warning("Google Trends returned 429 Too Many Requests (Rate limit reached). Switching to baseline trends to avoid timeout.")
+                        rate_limited = True
+                        break
                     time.sleep(self.sleep_seconds * (attempt + 2))
 
             # Try interest over time to measure trend trajectory
@@ -125,14 +134,15 @@ class GoogleTrendsCollector(Collector):
         # Fallback if 429 blocked all requests and no results
         if not evidence_list:
             logger.warning(f"Google Trends could not reach online data for '{niche.name}', inserting baseline fallback evidence.")
-            for seed in niche.seed_keywords[:2]:
+            for seed in niche.seed_keywords:
                 ev = Evidence(
                     source=self.name,
                     kind="keyword_signal",
                     keyword=seed,
-                    text=f"Từ khóa '{seed}' là từ khóa hạt giống tiềm năng trong mùa lễ hội Q4",
-                    value="Baseline seasonal keyword",
+                    text=f"[FALLBACK] Từ khóa '{seed}' — Google Trends trả lỗi 429, không có dữ liệu thật",
+                    value="Baseline seasonal keyword (fallback)",
                     source_url=f"https://trends.google.com/trends/explore?q={urllib.parse.quote_plus(seed)}&date=today%203-m",
+                    is_mock=True,
                 )
                 evidence_list.append(ev)
                 raw_results.append(ev.model_dump())
