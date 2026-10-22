@@ -99,6 +99,27 @@ class CacheManager:
         except Exception:
             pass
 
+    def get_meta(self, key: str) -> Optional[dict]:
+        """Generic small state store (e.g. circuit-breaker cooldowns), not subject to TTL."""
+        filename = f"_meta_{sanitize_filename(key)}.json"
+        file_path = self.raw_dir / filename
+        if not file_path.exists():
+            return None
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def set_meta(self, key: str, data: dict) -> None:
+        filename = f"_meta_{sanitize_filename(key)}.json"
+        file_path = self.raw_dir / filename
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def clear(self) -> None:
         """Removes all cached files."""
         for p in self.raw_dir.glob("*.json"):

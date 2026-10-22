@@ -31,12 +31,40 @@ class GoogleTrendsConfig(BaseModel):
     timeframe: str = "today 3-m"
     sleep_seconds: float = 2.0
     max_retries: int = 3
+    cooldown_minutes: int = 60
 
 
 class RedditConfig(BaseModel):
-    limit: int = 10
-    sort: str = "relevance"
-    time_filter: str = "month"
+    max_results_per_query: int = 5
+    time_range: str = "year"
+    search_depth: str = "advanced"
+    max_queries_per_intent: Optional[int] = None
+    preferred_subreddits: List[str] = Field(
+        default_factory=lambda: ["gifts", "GiftIdeas", "BuyItForLife", "AskMen", "AskWomen", "Etsy"]
+    )
+    intents: Dict[str, List[str]] = Field(
+        default_factory=lambda: {
+            "ask": [
+                "looking for {seed}",
+                "what should I get {seed}",
+            ],
+            "pain": [
+                "{seed} hard to choose",
+                "{seed} who has everything",
+            ],
+            "regret": [
+                "{seed} waste of money",
+                "regret buying {seed}",
+            ],
+            "recommend": [
+                "best {seed} worth it",
+                "{seed} actually use",
+            ],
+        }
+    )
+    limit: Optional[int] = 10
+    sort: Optional[str] = "relevance"
+    time_filter: Optional[str] = "month"
 
 
 class WebSearchConfig(BaseModel):

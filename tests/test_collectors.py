@@ -1,13 +1,17 @@
 """Tests for data collectors."""
 
 from __future__ import annotations
+from datetime import datetime, timedelta
+import pandas as pd
 import pytest
+from unittest.mock import MagicMock, patch
 from src.collectors.base import Collector
 from src.collectors.google_suggest import GoogleSuggestCollector
-from src.collectors.google_trends import GoogleTrendsCollector
+from src.collectors.google_trends import COOLDOWN_META_KEY, GoogleTrendsCollector
 from src.collectors.reddit import RedditCollector
 from src.collectors.web_search import WebSearchCollector
 from src.collectors.registry import collect_for_niche, COLLECTORS
+from src.core.cache import cache
 from src.core.models import Evidence, Niche
 
 
@@ -38,15 +42,31 @@ def test_google_suggest_collector(sample_niche):
         assert item.kind == "keyword_signal"
 
 
-def test_reddit_collector(sample_niche):
-    collector = RedditCollector()
-    results = collector.collect(sample_niche)
+@patch("tavily.TavilyClient")
+def test_reddit_collector(mock_tavily_cls, sample_niche):
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+    mock_client.search.return_value = {
+        "results": [
+            {
+                "title": "Best Christmas gifts under $50",
+                "url": "https://www.reddit.com/r/gifts/comments/abc123/best_gifts/",
+                "content": "Authentic feedback about quality gifts that do not break the bank for the holidays.",
+                "score": 0.9,
+            }
+        ]
+    }
+    collector = RedditCollector(api_key="tvly-test-key")
+    results = collector.collect(sample_niche, use_cache=False)
     assert isinstance(results, list)
     assert len(results) > 0
     for item in results:
         assert isinstance(item, Evidence)
         assert item.source == "reddit"
         assert item.source_url.startswith("http")
+        assert item.post_id == "abc123"
+        assert item.subreddit == "gifts"
+        assert item.value is None
 
 
 def test_web_search_collector(sample_niche):
@@ -58,6 +78,76 @@ def test_web_search_collector(sample_niche):
         assert isinstance(item, Evidence)
         assert item.source == "web_search"
         assert item.source_url.startswith("http")
+
+
+@pytest.fixture
+def cleanup_trends_cooldown():
+    """Ensures the Google Trends circuit-breaker state never leaks across tests or into
+    real dev runs."""
+    yield
+    meta_path = cache.raw_dir / "_meta_google_trends_cooldown.json"
+    meta_path.unlink(missing_ok=True)
+
+
+def test_google_trends_success_path(cleanup_trends_cooldown):
+    """A fully mocked TrendReq client lets us test the happy path with no network call."""
+    mock_client = MagicMock()
+    mock_client.related_queries.return_value = {
+        "christmas gift ideas": {
+            "rising": pd.DataFrame({"query": ["stocking stuffers for men"], "value": [120]}),
+            "top": pd.DataFrame({"query": ["best stocking stuffers"], "value": [85]}),
+        }
+    }
+    mock_client.interest_over_time.return_value = pd.DataFrame(
+        {"christmas gift ideas": [10, 12, 15, 40, 45, 50]}
+    )
+
+    collector = GoogleTrendsCollector(trend_client_factory=lambda: mock_client)
+    collector.sleep_seconds = 0
+    niche = Niche(id="t1", name="Christmas gift ideas", seed_keywords=["christmas gift ideas"])
+    results = collector.collect(niche, use_cache=False)
+
+    assert len(results) > 0
+    for ev in results:
+        assert isinstance(ev, Evidence)
+        assert ev.source == "google_trends"
+        assert ev.is_mock is False
+
+
+def test_google_trends_429_sets_cooldown_and_fallback(cleanup_trends_cooldown):
+    """A 429 from the client must trigger the baseline fallback AND persist a cooldown."""
+    mock_client = MagicMock()
+    mock_client.build_payload.side_effect = Exception("429 Too Many Requests")
+
+    collector = GoogleTrendsCollector(trend_client_factory=lambda: mock_client)
+    collector.sleep_seconds = 0
+    niche = Niche(id="t2", name="Gift for him", seed_keywords=["gifts for him"])
+    results = collector.collect(niche, use_cache=False)
+
+    assert len(results) > 0
+    assert all(ev.is_mock for ev in results)
+
+    meta = cache.get_meta(COOLDOWN_META_KEY)
+    assert meta is not None
+    limited_until = datetime.fromisoformat(meta["limited_until"])
+    assert limited_until > datetime.now()
+
+
+def test_google_trends_skips_real_call_during_cooldown(cleanup_trends_cooldown):
+    """While a cooldown is active, the real client must never even be constructed."""
+    future = datetime.now() + timedelta(minutes=30)
+    cache.set_meta(COOLDOWN_META_KEY, {"limited_until": future.isoformat()})
+
+    def factory():
+        raise AssertionError("Real Trends client should not be instantiated during cooldown")
+
+    collector = GoogleTrendsCollector(trend_client_factory=factory)
+    collector.sleep_seconds = 0
+    niche = Niche(id="t3", name="Valentine gift", seed_keywords=["valentine gifts"])
+    results = collector.collect(niche, use_cache=False)
+
+    assert len(results) > 0
+    assert all(ev.is_mock for ev in results)
 
 
 def test_registry_collect_for_niche(sample_niche):

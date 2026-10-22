@@ -16,10 +16,31 @@ collectors:
     timeframe: "today 3-m"
     sleep_seconds: 2
     max_retries: 3
+    cooldown_minutes: 60
   reddit:
-    limit: 10
-    sort: "relevance"
-    time_filter: "month"
+    max_results_per_query: 5
+    time_range: "year"
+    search_depth: "advanced"
+    preferred_subreddits:
+      - "gifts"
+      - "GiftIdeas"
+      - "BuyItForLife"
+      - "AskMen"
+      - "AskWomen"
+      - "Etsy"
+    intents:
+      ask:
+        - "looking for {seed}"
+        - "what should I get {seed}"
+      pain:
+        - "{seed} hard to choose"
+        - "{seed} who has everything"
+      regret:
+        - "{seed} waste of money"
+        - "regret buying {seed}"
+      recommend:
+        - "best {seed} worth it"
+        - "{seed} actually use"
   web_search:
     max_results: 5
   google_suggest:
