@@ -62,7 +62,7 @@
 ---
 {% endfor %}
 
-{% set has_mock = report.models_used.values() | select("search", "mock") | list | length > 0 -%}
+{%- set has_mock = "mock" in (report.models_used.values() | join(" ") | lower) -%}
 {% if has_mock -%}
 *⚠️ Báo cáo này sử dụng dữ liệu mẫu (mock). Không dùng để ra quyết định kinh doanh.*
 {% else -%}
