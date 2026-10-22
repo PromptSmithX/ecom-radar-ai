@@ -18,13 +18,14 @@ class GoogleSuggestCollector(Collector):
         self.client_param = settings.collectors.google_suggest.client
         self.hl = settings.collectors.google_suggest.hl
 
-    def collect(self, niche: Niche) -> List[Evidence]:
+    def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
         evidence_list: List[Evidence] = []
-        cached_data = cache.get_raw(self.name, niche.name)
-        if cached_data is not None:
-            for item in cached_data:
-                evidence_list.append(Evidence(**item))
-            return evidence_list
+        if use_cache:
+            cached_data = cache.get_raw(self.name, niche.name)
+            if cached_data is not None:
+                for item in cached_data:
+                    evidence_list.append(Evidence(**item))
+                return evidence_list
 
         raw_results = []
         headers = {
@@ -44,17 +45,19 @@ class GoogleSuggestCollector(Collector):
                         data = resp.json()
                         # data structure: [query, [suggestions...]]
                         suggestions = data[1] if len(data) > 1 and isinstance(data[1], list) else []
-                        for sug in suggestions[:6]:
+                        top_suggestions = suggestions[:6]
+                        for idx, sug in enumerate(top_suggestions):
                             if not sug:
                                 continue
+                            rank = idx + 1
                             encoded_q = urllib.parse.quote_plus(sug)
                             ev = Evidence(
                                 source=self.name,
                                 kind="keyword_signal",
                                 keyword=sug,
-                                text=f"Google Autocomplete gợi ý tìm kiếm xu hướng: '{sug}' từ seed keyword '{seed}'",
-                                value="Top Google Autocomplete Suggestion",
-                                source_url=f"https://www.google.com/search?q={encoded_q}",
+                                text=f"Google Autocomplete gợi ý #{rank}/{len(top_suggestions)} khi tìm '{seed}': '{sug}' (không kèm số liệu định lượng)",
+                                value=f"Vị trí gợi ý #{rank} trong Autocomplete",
+                                source_url=f"https://trends.google.com/trends/explore?q={encoded_q}&date=today%203-m",
                             )
                             evidence_list.append(ev)
                             raw_results.append(ev.model_dump())
