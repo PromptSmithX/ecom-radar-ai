@@ -30,13 +30,21 @@
 Tool kết hợp 4 nguồn dữ liệu đa dạng để phản ánh trọn vẹn bức tranh thị trường:
 
 1. **Google Suggest / Autocomplete:** Gọi trực tiếp endpoint gợi ý công khai của Google nhằm phát hiện các từ khóa tìm kiếm mở rộng (long-tail keywords) người dùng đang thực sự gõ nhiều nhất. (Chi phí: $0, không cần API key).
-2. **Google Trends (`pytrends`):** Đo lường xu hướng tìm kiếm trong 90 ngày (`today 3-m`), phát hiện các truy vấn bứt phá mạnh (`rising / breakout queries` tăng trưởng từ +50% đến +650%).
-3. **Reddit Community:** Tìm kiếm thảo luận người dùng trên các subreddit cộng đồng (`r/gifts`, `r/BuyItForLife`, `r/AskMen`, `r/Etsy`...) để trích xuất các **nỗi đau (pain points), phàn nàn thực tế và nhu cầu chưa được đáp ứng**.
+2. **Google Trends:** Đo lường xu hướng tìm kiếm trong 90 ngày (`today 3-m`), phát hiện các truy vấn bứt phá mạnh (`rising / breakout queries` tăng trưởng từ +50% đến +650%). Có 2 nguồn lấy dữ liệu, chọn được qua UI (`Nguồn dữ liệu Trend`) hoặc CLI (`--trend-source`):
+   - `google_trends` (mặc định): dùng `pytrends` scrape trực tiếp, miễn phí nhưng dễ bị lỗi 429 (lib đã bị archive). Có circuit breaker tự chuyển sang dữ liệu fallback khi bị rate-limit.
+   - `serpapi`: dùng [SerpApi](https://serpapi.com) (free tier 250 request/tháng) để lấy đúng dữ liệu Google Trends qua API ổn định hơn, chỉ tốn 1 request/seed keyword. Cần `SERPAPI_API_KEY` trong `.env`.
+3. **Reddit Community:** Tìm kiếm thảo luận người dùng trên Reddit qua Tavily API theo 4 nhóm intent rõ rệt:
+   - `ask`: Các câu hỏi tìm kiếm ý tưởng (vd: `looking for {seed}`, `what should I get {seed}`).
+   - `pain`: Nỗi đau và sự khó khăn khi chọn lựa (vd: `{seed} hard to choose`, `{seed} who has everything`).
+   - `regret`: Phàn nàn và hối tiếc sau khi mua (vd: `{seed} waste of money`, `regret buying {seed}`).
+   - `recommend`: Sản phẩm đáng giá được khuyên dùng (vd: `best {seed} worth it`, `{seed} actually use`).
+   - *Lưu ý về số liệu:* Bộ thu thập lọc nghiêm ngặt các permalink thread thật (`reddit.com/r/<sub>/comments/<id>/...`), trích xuất snippet nguyên văn, khử trùng lặp theo `post_id`, ưu tiên subreddit chất lượng (`r/gifts`, `r/GiftIdeas`, `r/BuyItForLife`, `r/AskMen`, `r/AskWomen`, `r/Etsy`), và tuyệt đối KHÔNG tự gán/bịa đặt số lượng upvotes hay comment count.
+   - *Hướng mở rộng (TODO):* Enrich bài viết bằng PRAW (Python Reddit API Wrapper) dựa trên `post_id` thu thập được để lấy điểm số thực tế (`score`/upvotes), số lượng bình luận (`num_comments`) và các top comments chất lượng cao.
 4. **Web Search & Market Benchmarks (Tavily / E-commerce Listicles):** Khảo sát mức giá trung bình của thị trường, các sản phẩm bán chạy (bestsellers) trên Amazon/Etsy, và đánh giá mức độ cạnh tranh.
 
 ### 🛡️ Cơ chế chống Hallucination (Chống bịa số / URL):
 - **Nguyên tắc dữ liệu thô:** LLM không tự sáng tạo số liệu. Mọi số liệu trong báo cáo bắt buộc phải xuất phát từ gói bằng chứng (*Evidence Pack*) được thu thập ở bước 1. Nếu thiếu số liệu, hệ thống tự động ghi nhận chuỗi `"Không có dữ liệu"`.
-- **Bộ kiểm chứng độc lập (`src/pipeline/validator.py`):** Sau khi LLM sinh báo cáo, code Python kiểm tra chéo từng `source_url`. Nếu phát hiện URL lạ không nằm trong tập Evidence ban đầu, validator sẽ tự động loại bỏ hoặc thay thế bằng URL bằng chứng gốc tương ứng.
+- **Bộ kiểm chứng độc lập (`src/pipeline/validator.py`):** Sau khi LLM sinh báo cáo, code Python kiểm tra chéo từng `source_url`. Nếu phát hiện URL lạ không nằm trong tập Evidence ban đầu, validator sẽ tự động loại bỏ hoặc thay thế bằng URL bằng chứng gốc tương ứng. Đồng thời, validator chủ động rà soát và loại bỏ các số liệu upvote tự bịa không có trong dữ liệu bằng chứng gốc.
 
 ---
 
@@ -80,6 +88,8 @@ Nội dung file `.env`:
 GEMINI_API_KEY=your_gemini_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
 TAVILY_API_KEY=your_tavily_api_key_here
+# Tuy chon - chi can khi chon nguon Trend "serpapi" tren UI/CLI (free tier 250 request/thang)
+SERPAPI_API_KEY=your_serpapi_api_key_here
 REDDIT_USER_AGENT=trend-research/0.1 (by ecomm-researcher)
 ```
 *(Nếu chưa có key, bạn vẫn có thể chạy bình thường bằng tùy chọn `mock` trên UI hoặc CLI).*
@@ -162,9 +172,10 @@ ai_analyze_ecomm/
 │   │   ├── base.py            # Base Collector interface
 │   │   ├── google_suggest.py  # Thu thập Google Autocomplete
 │   │   ├── google_trends.py   # Thu thập Google Trends (pytrends + retry 429)
+│   │   ├── serpapi_trends.py  # Thu thập Google Trends qua SerpApi (nguồn thay thế)
 │   │   ├── reddit.py          # Thu thập thảo luận & than phiền từ Reddit
 │   │   ├── web_search.py      # Thu thập giá & đối thủ từ Web/Benchmarks
-│   │   └── registry.py        # Đăng ký & điều phối tập trung các collector
+│   │   └── registry.py        # Đăng ký & điều phối tập trung các collector (build_collectors chọn trend provider)
 │   ├── llm/                   # Module tương tác với LLM
 │   │   ├── base.py            # Base LLMClient & Usage metrics
 │   │   ├── gemini_client.py   # Client Google GenAI SDK

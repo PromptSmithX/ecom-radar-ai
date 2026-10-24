@@ -31,11 +31,26 @@ ENV/
 
 # Testing & Coverage
 .pytest_cache/
+.pytest_tmp/
 .coverage
 htmlcov/
 
 # Streamlit
 .streamlit/
+
+# Generated runtime data (cache, evidence packs, reports) - khong phai source code
+data/raw/*.json
+data/evidence/*.json
+reports/*.md
+!data/raw/.gitkeep
+!data/evidence/.gitkeep
+!reports/.gitkeep
+
+# Secrets & logs (phong ngua)
+*.log
+*.key
+*.pem
+.env.*.local
 
 # OS Specific
 .DS_Store

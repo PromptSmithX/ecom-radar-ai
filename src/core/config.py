@@ -31,12 +31,59 @@ class GoogleTrendsConfig(BaseModel):
     timeframe: str = "today 3-m"
     sleep_seconds: float = 2.0
     max_retries: int = 3
+    cooldown_minutes: int = 60
+
+
+class SerpApiConfig(BaseModel):
+    hl: str = "en"
+    geo: str = "US"
+    date: str = "today 3-m"
+    cooldown_minutes: int = 60
+    include_interest_over_time: bool = False
 
 
 class RedditConfig(BaseModel):
-    limit: int = 10
-    sort: str = "relevance"
-    time_filter: str = "month"
+    # Reddit is sourced through Tavily: the public JSON endpoint now returns 403
+    # because Reddit forces login for anonymous search.
+    use_tavily: bool = True
+    time_range: str = "year"
+    search_depth: str = "basic"  # basic (1 credit) | advanced (2 credits)
+
+    # Credit budget: max_seeds x max_intents x max_queries_per_intent = queries per niche.
+    # Defaults give exactly 2 Tavily queries (= 2 credits) per niche: pain + regret.
+    max_seeds: int = 1
+    max_intents: int = 2
+    max_queries_per_intent: int = 1
+    # Tavily bills per search, not per result, so a larger page size is free.
+    max_results_per_query: int = 10
+
+    preferred_subreddits: List[str] = Field(
+        default_factory=lambda: ["gifts", "GiftIdeas", "BuyItForLife", "AskMen", "AskWomen", "Etsy"]
+    )
+    # Order matters: with max_intents=2 only the first 2 intents run. "pain" and
+    # "regret" lead because they surface the signals that matter most for product
+    # risk — what's frustrating buyers right now, and what they regret buying —
+    # ahead of "ask"/"recommend" which are lower-value for that decision.
+    intents: Dict[str, List[str]] = Field(
+        default_factory=lambda: {
+            "pain": [
+                "{seed} hard to choose",
+                "{seed} who has everything",
+            ],
+            "regret": [
+                "{seed} waste of money",
+                "regret buying {seed}",
+            ],
+            "ask": [
+                "looking for {seed}",
+                "what should I get {seed}",
+            ],
+            "recommend": [
+                "best {seed} worth it",
+                "{seed} actually use",
+            ],
+        }
+    )
 
 
 class WebSearchConfig(BaseModel):
@@ -46,13 +93,38 @@ class WebSearchConfig(BaseModel):
 class GoogleSuggestConfig(BaseModel):
     client: str = "firefox"
     hl: str = "en"
+    # Tried in order; the first provider that answers wins. Google rate-limits (429)
+    # an IP after repeated runs, so DuckDuckGo and Bing act as drop-in backups —
+    # all three return the same ["query", [suggestions...]] shape.
+    providers: List[str] = Field(default_factory=lambda: ["google", "duckduckgo", "bing"])
+    request_delay: float = 1.0
+    max_suggestions: int = 6
 
 
 class CollectorsConfig(BaseModel):
+    trend_provider: str = "google_trends"  # "google_trends" | "serpapi"
     google_trends: GoogleTrendsConfig = Field(default_factory=GoogleTrendsConfig)
+    serpapi: SerpApiConfig = Field(default_factory=SerpApiConfig)
     reddit: RedditConfig = Field(default_factory=RedditConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     google_suggest: GoogleSuggestConfig = Field(default_factory=GoogleSuggestConfig)
+
+
+class DigestConfig(BaseModel):
+    max_items: int = 25  # cap for the programmatic (no-LLM) digest
+    max_items_llm: int = 35  # cap for what gets fed into the LLM digest prompt
+    # Evidence is picked round-robin across sources in this order, so a source that
+    # returns many cheap items (google_suggest) can't crowd out the expensive,
+    # hard-to-get ones (reddit) by simply arriving first.
+    source_priority: List[str] = Field(
+        default_factory=lambda: [
+            "reddit",
+            "serpapi_trends",
+            "google_trends",
+            "web_search",
+            "google_suggest",
+        ]
+    )
 
 
 class CacheConfig(BaseModel):
@@ -78,11 +150,13 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
     tavily_api_key: Optional[str] = Field(default=None, alias="TAVILY_API_KEY")
+    serpapi_api_key: Optional[str] = Field(default=None, alias="SERPAPI_API_KEY")
     reddit_user_agent: str = Field(default="trend-research/0.1 (by ecomm-researcher)", alias="REDDIT_USER_AGENT")
 
     # Settings from YAML
     llm: LLMConfig = Field(default_factory=LLMConfig)
     collectors: CollectorsConfig = Field(default_factory=CollectorsConfig)
+    digest: DigestConfig = Field(default_factory=DigestConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     reporting: ReportingConfig = Field(default_factory=ReportingConfig)
 

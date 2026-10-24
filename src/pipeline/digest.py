@@ -6,25 +6,69 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
 from src.core.cache import cache
-from src.core.config import BASE_DIR
+from src.core.config import BASE_DIR, settings
 from src.core.models import Evidence, Niche
 from src.llm.base import LLMClient, Usage
 
 logger = logging.getLogger(__name__)
 
 
-def programmatic_digest(raw_evidence: List[Evidence], max_items: int = 25) -> List[Evidence]:
-    """Fallback deduplication and clean-up without LLM."""
+def balanced_subset(
+    raw_evidence: List[Evidence],
+    max_items: int,
+    priority: Optional[List[str]] = None,
+) -> List[Evidence]:
+    """Picks up to max_items evidence, round-robin across sources in priority order,
+    instead of cutting off at whichever source happened to arrive first.
+
+    Without this, a cheap, high-volume source (e.g. google_suggest) that runs early
+    can fill the entire cap before an expensive, low-volume source (e.g. reddit) is
+    ever considered — silently dropping it from the report even though it collected
+    real data.
+    """
+    priority = priority or settings.digest.source_priority
+
+    # 1. Dedupe by source_url, drop anything without one, group by source.
     seen_urls = set()
-    cleaned: List[Evidence] = []
+    by_source: dict[str, List[Evidence]] = {}
     for item in raw_evidence:
         if not item.source_url or item.source_url in seen_urls:
             continue
         seen_urls.add(item.source_url)
-        cleaned.append(item)
-        if len(cleaned) >= max_items:
+        by_source.setdefault(item.source, []).append(item)
+
+    if not by_source:
+        return []
+
+    # 2. Order sources: priority list first, then any unlisted source in first-seen order.
+    ordered_sources = [s for s in priority if s in by_source]
+    ordered_sources += [s for s in by_source if s not in ordered_sources]
+
+    # 3. Round-robin: take one item per source per round until max_items or exhausted.
+    cleaned: List[Evidence] = []
+    cursors = {s: 0 for s in ordered_sources}
+    while len(cleaned) < max_items:
+        took_any = False
+        for source in ordered_sources:
+            if len(cleaned) >= max_items:
+                break
+            idx = cursors[source]
+            items = by_source[source]
+            if idx >= len(items):
+                continue
+            cleaned.append(items[idx])
+            cursors[source] = idx + 1
+            took_any = True
+        if not took_any:
             break
+
     return cleaned
+
+
+def programmatic_digest(raw_evidence: List[Evidence], max_items: Optional[int] = None) -> List[Evidence]:
+    """Fallback deduplication and clean-up without LLM."""
+    cap = max_items if max_items is not None else settings.digest.max_items
+    return balanced_subset(raw_evidence, cap)
 
 
 def digest_step(
@@ -59,7 +103,8 @@ def digest_step(
     prompt_file = BASE_DIR / "src" / "prompts" / "digest.md"
     system_prompt = prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else "You are an e-commerce market researcher."
 
-    raw_evidence_json = json.dumps([e.model_dump() for e in raw_evidence[:35]], ensure_ascii=False, indent=2)
+    llm_input = balanced_subset(raw_evidence, settings.digest.max_items_llm)
+    raw_evidence_json = json.dumps([e.model_dump() for e in llm_input], ensure_ascii=False, indent=2)
     user_prompt = f"""Dưới đây là danh sách dữ liệu thô thu thập được cho niche '{niche.name}':
 
 {raw_evidence_json}

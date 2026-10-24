@@ -1,10 +1,12 @@
-"""Google Trends collector using pytrends with rate-limiting, retry, and caching."""
+"""Google Trends collector using pytrends with rate-limiting, retry, caching, and a
+circuit breaker that remembers a 429 and skips real calls during its cooldown window."""
 
 from __future__ import annotations
 import logging
 import time
 import urllib.parse
-from typing import List
+from datetime import datetime, timedelta
+from typing import Callable, List, Optional
 from pytrends.request import TrendReq
 from src.core.cache import cache
 from src.core.config import settings
@@ -13,36 +15,79 @@ from .base import Collector
 
 logger = logging.getLogger(__name__)
 
+COOLDOWN_META_KEY = "google_trends_cooldown"
+
 
 class GoogleTrendsCollector(Collector):
     name: str = "google_trends"
 
-    def __init__(self):
+    def __init__(self, trend_client_factory: Optional[Callable[[], TrendReq]] = None):
         self.hl = settings.collectors.google_trends.hl
         self.tz = settings.collectors.google_trends.tz
         self.timeframe = settings.collectors.google_trends.timeframe
         self.sleep_seconds = settings.collectors.google_trends.sleep_seconds
         self.max_retries = settings.collectors.google_trends.max_retries
+        self.cooldown_minutes = settings.collectors.google_trends.cooldown_minutes
+        # Injectable factory so tests can supply a fake client without touching the network.
+        self._trend_client_factory = trend_client_factory or (
+            lambda: TrendReq(hl=self.hl, tz=self.tz, timeout=(10, 25))
+        )
 
-    def collect(self, niche: Niche) -> List[Evidence]:
+    def _baseline_fallback(self, niche: Niche) -> List[Evidence]:
+        """Clearly-marked placeholder evidence used when real Trends data is unavailable."""
+        logger.warning(f"Google Trends could not reach online data for '{niche.name}', inserting baseline fallback evidence.")
+        evidence_list: List[Evidence] = []
+        for seed in niche.seed_keywords:
+            ev = Evidence(
+                source=self.name,
+                kind="keyword_signal",
+                keyword=seed,
+                text=f"[FALLBACK] Từ khóa '{seed}' — Google Trends trả lỗi 429, không có dữ liệu thật",
+                value="Baseline seasonal keyword (fallback)",
+                source_url=f"https://trends.google.com/trends/explore?q={urllib.parse.quote_plus(seed)}&date=today%203-m",
+                is_mock=True,
+            )
+            evidence_list.append(ev)
+        return evidence_list
+
+    def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
         evidence_list: List[Evidence] = []
 
-        # 1. Check cache first
-        cached_data = cache.get_raw(self.name, niche.name)
-        if cached_data is not None:
-            logger.info(f"Loaded Google Trends data from cache for niche: {niche.name}")
-            return [Evidence(**item) for item in cached_data]
+        # 1. Check cache first if enabled
+        if use_cache:
+            cached_data = cache.get_raw(self.name, niche.name)
+            if cached_data is not None:
+                logger.info(f"Loaded Google Trends data from cache for niche: {niche.name}")
+                return [Evidence(**item) for item in cached_data]
+
+        # 2. Circuit breaker: if a previous call already hit 429, skip the real API
+        # entirely until the cooldown expires instead of wasting time on doomed retries.
+        cooldown_meta = cache.get_meta(COOLDOWN_META_KEY)
+        if cooldown_meta and cooldown_meta.get("limited_until"):
+            try:
+                limited_until = datetime.fromisoformat(cooldown_meta["limited_until"])
+                if datetime.now() < limited_until:
+                    logger.warning(
+                        f"Google Trends đang trong cooldown do 429 trước đó (hết lúc {limited_until.isoformat()}). "
+                        f"Bỏ qua gọi API thật cho '{niche.name}'."
+                    )
+                    return self._baseline_fallback(niche)
+            except (ValueError, TypeError):
+                pass
 
         raw_results = []
-        kw_list = niche.seed_keywords[:2] if niche.seed_keywords else [niche.name]
+        kw_list = niche.seed_keywords if niche.seed_keywords else [niche.name]
 
         try:
-            pytrend = TrendReq(hl=self.hl, tz=self.tz, timeout=(10, 25))
+            pytrend = self._trend_client_factory()
         except Exception as e:
             logger.warning(f"Could not initialize TrendReq: {e}")
             return []
 
+        rate_limited = False
         for kw in kw_list:
+            if rate_limited:
+                break
             time.sleep(self.sleep_seconds)
             encoded_kw = urllib.parse.quote_plus(kw)
             trend_url = f"https://trends.google.com/trends/explore?q={encoded_kw}&date=today%203-m"
@@ -94,7 +139,14 @@ class GoogleTrendsCollector(Collector):
                                     raw_results.append(ev.model_dump())
                     break
                 except Exception as e:
-                    logger.warning(f"Google Trends query '{kw}' attempt {attempt+1} failed: {e}")
+                    err_msg = str(e)
+                    logger.warning(f"Google Trends query '{kw}' attempt {attempt+1} failed: {err_msg}")
+                    if "429" in err_msg:
+                        logger.warning("Google Trends returned 429 Too Many Requests (Rate limit reached). Switching to baseline trends and setting cooldown.")
+                        rate_limited = True
+                        limited_until = datetime.now() + timedelta(minutes=self.cooldown_minutes)
+                        cache.set_meta(COOLDOWN_META_KEY, {"limited_until": limited_until.isoformat()})
+                        break
                     time.sleep(self.sleep_seconds * (attempt + 2))
 
             # Try interest over time to measure trend trajectory
@@ -124,18 +176,8 @@ class GoogleTrendsCollector(Collector):
 
         # Fallback if 429 blocked all requests and no results
         if not evidence_list:
-            logger.warning(f"Google Trends could not reach online data for '{niche.name}', inserting baseline fallback evidence.")
-            for seed in niche.seed_keywords[:2]:
-                ev = Evidence(
-                    source=self.name,
-                    kind="keyword_signal",
-                    keyword=seed,
-                    text=f"Từ khóa '{seed}' là từ khóa hạt giống tiềm năng trong mùa lễ hội Q4",
-                    value="Baseline seasonal keyword",
-                    source_url=f"https://trends.google.com/trends/explore?q={urllib.parse.quote_plus(seed)}&date=today%203-m",
-                )
-                evidence_list.append(ev)
-                raw_results.append(ev.model_dump())
+            evidence_list = self._baseline_fallback(niche)
+            raw_results = [ev.model_dump() for ev in evidence_list]
 
         if raw_results:
             cache.set_raw(self.name, niche.name, raw_results)

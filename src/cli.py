@@ -6,10 +6,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Đảm bảo thư mục gốc dự án luôn nằm trong sys.path
+# Đảm bảo thư mục gốc dự án luôn nằm trong sys.path và console hỗ trợ UTF-8
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 import typer
 from rich.console import Console
@@ -67,7 +73,9 @@ def run(
     writer_model: Optional[str] = typer.Option(None, "--writer-model", help="Tên model viết báo cáo"),
     digest_provider: Optional[str] = typer.Option(None, "--digest", "-d", help="LLM Provider cho bước digest: gemini | openai | mock"),
     digest_model: Optional[str] = typer.Option(None, "--digest-model", help="Tên model digest"),
+    trend_source: Optional[str] = typer.Option(None, "--trend-source", help="Nguồn dữ liệu Trend: google_trends | serpapi"),
     use_cache: bool = typer.Option(True, "--cache/--no-cache", help="Có sử dụng dữ liệu đã cache hay không"),
+    use_tavily: bool = typer.Option(True, "--tavily/--no-tavily", help="Dùng Tavily cho Reddit + Web Search. Reddit JSON công khai đã bị chặn (yêu cầu đăng nhập), nên tắt cờ này sẽ không có dữ liệu Reddit."),
 ):
     """Executes the full AI trend research pipeline and outputs a Markdown report."""
     category, all_niches = load_niches()
@@ -81,19 +89,43 @@ def run(
 
     # Determine default provider
     w_provider = writer_provider or settings.llm.writer.provider
-    # If no API key is available, notify and fallback to mock
+
+    # Check API key availability — warn loudly, do NOT silently fall back to mock
+    missing_key = False
     if w_provider == "gemini" and not settings.gemini_api_key:
-        console.print("[yellow]Cảnh báo: GEMINI_API_KEY chưa cấu hình. Tự động chuyển sang chế độ test 'mock'.[/yellow]")
-        w_provider = "mock"
+        console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy chạy lại sau khi đặt key, hoặc dùng '--writer mock' nếu chỉ muốn thử nghiệm.[/yellow]")
+        missing_key = True
     elif w_provider == "openai" and not settings.openai_api_key:
-        console.print("[yellow]Cảnh báo: OPENAI_API_KEY chưa cấu hình. Tự động chuyển sang chế độ test 'mock'.[/yellow]")
-        w_provider = "mock"
+        console.print("[bold red]❌ Lỗi: OPENAI_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy chạy lại sau khi đặt key, hoặc dùng '--writer mock' nếu chỉ muốn thử nghiệm.[/yellow]")
+        missing_key = True
+
+    if missing_key:
+        raise typer.Exit(1)
+
+    trend_provider = trend_source or settings.collectors.trend_provider
+    if trend_provider == "serpapi" and not settings.serpapi_api_key:
+        console.print("[bold red]❌ Lỗi: SERPAPI_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy dán key lấy từ serpapi.com vào .env, hoặc dùng '--trend-source google_trends' để quay lại pytrends.[/yellow]")
+        raise typer.Exit(1)
+
+    if use_tavily and not settings.tavily_api_key:
+        console.print("[bold red]❌ Lỗi: --tavily được bật nhưng TAVILY_API_KEY chưa được cấu hình trong .env[/bold red]")
+        console.print("[yellow]   Hãy dán key lấy từ tavily.com vào .env, hoặc bỏ cờ --tavily để chỉ dùng Reddit JSON công khai.[/yellow]")
+        raise typer.Exit(1)
 
     d_provider = digest_provider or (w_provider if w_provider == "mock" else settings.llm.digest.provider)
     if d_provider == "gemini" and not settings.gemini_api_key:
-        d_provider = "mock"
+        console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
+        raise typer.Exit(1)
     elif d_provider == "openai" and not settings.openai_api_key:
-        d_provider = "mock"
+        console.print("[bold red]❌ Lỗi: OPENAI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
+        raise typer.Exit(1)
+
+    # When using mock, display a clear warning so the user knows output is not real data
+    if w_provider == "mock":
+        console.print("[bold yellow]⚠️  Chế độ MOCK — báo cáo sẽ chứa dữ liệu mẫu, không dùng để ra quyết định kinh doanh.[/bold yellow]\n")
 
     runner = PipelineRunner(
         digest_provider=d_provider,
@@ -102,13 +134,16 @@ def run(
         writer_model=writer_model,
         summary_provider=w_provider,
         summary_model=writer_model,
+        trend_provider=trend_provider,
         use_cache=use_cache,
+        use_tavily=use_tavily,
     )
 
     console.print(f"\n[bold green]=== BẮT ĐẦU NGHIÊN CỨU XU HƯỚNG ===[/bold green]")
     console.print(f"Danh mục: [bold cyan]{category}[/bold cyan]")
     console.print(f"Số lượng Niche: [bold cyan]{len(selected_niches)}[/bold cyan]")
-    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
+    tavily_status = "BẬT" if use_tavily else "TẮT"
+    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Tavily: [bold]{tavily_status}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
 
     def progress_callback(stage: str, fraction: float, msg: str):
         pct = int(fraction * 100)

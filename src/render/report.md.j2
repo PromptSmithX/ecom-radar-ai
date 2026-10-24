@@ -51,15 +51,20 @@
 - **Khoảng giá tham khảo:** `{{ nr.price_range }}`
 
 ### 3. Đề xuất Idea sản phẩm
-| Ý tưởng | Bán cái gì | Khách hàng mục tiêu | Vì sao nên bán bây giờ |
-| :--- | :--- | :--- | :--- |
+| Ý tưởng | Bán cái gì | Khách hàng mục tiêu | Vì sao nên bán bây giờ | Căn cứ minh chứng |
+| :--- | :--- | :--- | :--- | :--- |
 {% for id in nr.ideas -%}
-| **{{ id.title }}** | {{ id.what }} | {{ id.for_whom }} | {{ id.why_now }} |
+| **{{ id.title }}** | {{ id.what }} | {{ id.for_whom }} | {{ id.why_now }} | {% for ref in id.evidence_refs %}[Minh chứng]({{ ref }}){% if not loop.last %}, {% endif %}{% else %}-{% endfor %} |
 {% else -%}
-| *Đang cập nhật* | - | - | - |
+| *Đang cập nhật* | - | - | - | - |
 {% endfor %}
 
 ---
 {% endfor %}
 
+{%- set has_mock = "mock" in (report.models_used.values() | join(" ") | lower) -%}
+{% if has_mock -%}
+*⚠️ Báo cáo này sử dụng dữ liệu mẫu (mock). Không dùng để ra quyết định kinh doanh.*
+{% else -%}
 *Báo cáo được tạo tự động bởi AI Trend Research Tool. Mọi thông tin số liệu đều được dẫn chiếu trực tiếp từ nguồn thu thập thực tế.*
+{% endif -%}
