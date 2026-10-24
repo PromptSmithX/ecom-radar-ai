@@ -1,4 +1,10 @@
-"""Reddit community collector using public JSON endpoint (default) and optional Tavily API."""
+"""Reddit community collector using the Tavily API to extract authentic customer feedback.
+
+Reddit's own public JSON search endpoint (search.json) now forces login for anonymous
+search — old.reddit.com/search.json redirects to /login. Tavily is therefore the only
+working source and is queried as little as possible (1 query/niche by default) to
+conserve credits. See config.RedditConfig for the budget knobs.
+"""
 
 from __future__ import annotations
 import hashlib
@@ -7,7 +13,6 @@ import logging
 import re
 import time
 from typing import Any, Dict, List, Optional, Set
-import httpx
 from src.core.cache import cache
 from src.core.config import settings
 from src.core.models import Evidence, Niche
@@ -23,10 +28,6 @@ REDDIT_THREAD_PATTERN = re.compile(
 )
 
 DEFAULT_INTENTS: Dict[str, List[str]] = {
-    "ask": [
-        "looking for {seed}",
-        "what should I get {seed}",
-    ],
     "pain": [
         "{seed} hard to choose",
         "{seed} who has everything",
@@ -35,13 +36,56 @@ DEFAULT_INTENTS: Dict[str, List[str]] = {
         "{seed} waste of money",
         "regret buying {seed}",
     ],
+    "ask": [
+        "looking for {seed}",
+        "what should I get {seed}",
+    ],
     "recommend": [
         "best {seed} worth it",
         "{seed} actually use",
     ],
 }
 
-REDDIT_SEARCH_URL = "https://www.reddit.com/search.json"
+# Tavily's `content` is crawled from the full page, not just the post body, so it
+# carries site navigation/UI chrome that has no business being treated as customer
+# testimony. Patterns below were collected directly from real Tavily responses
+# (data/raw/reddit_query_*.json) rather than guessed.
+_BOILERPLATE_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"skip to main content",
+        r"open menu open navigation",
+        r"go to reddit home",
+        r"get app get the reddit app",
+        r"log in\s*log in to reddit",
+        r"sign up\s*sign up for reddit",
+        r"expand user menu open settings menu",
+        r"image \d+[:]?\s*(u/\S+\s*avatar|go to \S+)?",
+        r"create your account and connect with a world of communities\.?",
+        r"by continuing, you agree to our\s*user agreement\s*and acknowledge that you understand the\s*privacy policy\.?",
+        r"#\s*people also ask about section\.?",
+        r"\d+\s*more repl(?:y|ies)",
+        r"•\s*\d+\s*mo ago",
+        r"\[deleted\]",
+    ]
+]
+
+
+def _strip_boilerplate(text: str) -> str:
+    """Removes known Reddit/Tavily page-chrome junk (nav menus, login prompts,
+    reply-thread artifacts) from crawled content so it isn't mistaken for genuine
+    customer testimony when building Evidence."""
+    if not text:
+        return text
+    cleaned = text
+    for pattern in _BOILERPLATE_PATTERNS:
+        cleaned = pattern.sub(" ", cleaned)
+    # Drop a leading markdown header marker (the duplicated title text itself is
+    # harmless to keep; only the "# " prefix is chrome). A greedy match of the
+    # whole header line would risk swallowing the entire snippet on single-line
+    # content that has no following newline to stop at.
+    cleaned = re.sub(r"^\s*#+\s*", " ", cleaned, count=1)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 class RedditCollector(Collector):
@@ -51,17 +95,10 @@ class RedditCollector(Collector):
         self.api_key = api_key if api_key is not None else settings.tavily_api_key
         reddit_cfg = settings.collectors.reddit
 
-        # Tavily toggle: explicit arg > config > default False
-        self.use_tavily = use_tavily if use_tavily is not None else getattr(reddit_cfg, "use_tavily", False)
+        # Tavily toggle: explicit arg > config > default True
+        self.use_tavily = use_tavily if use_tavily is not None else getattr(reddit_cfg, "use_tavily", True)
 
-        # Reddit JSON public endpoint settings
-        self.request_delay: float = getattr(reddit_cfg, "request_delay", 3.0) or 3.0
-        self.limit: int = getattr(reddit_cfg, "limit", 10) or 10
-        self.sort: str = getattr(reddit_cfg, "sort", "relevance") or "relevance"
-        self.time_filter: str = getattr(reddit_cfg, "time_filter", "month") or "month"
-
-        # Tavily settings
-        self.max_results_per_query: int = getattr(reddit_cfg, "max_results_per_query", 5) or 5
+        self.max_results_per_query: int = getattr(reddit_cfg, "max_results_per_query", 10) or 10
         self.time_range: str = getattr(reddit_cfg, "time_range", "year") or "year"
         self.search_depth: str = getattr(reddit_cfg, "search_depth", "basic") or "basic"
         self.preferred_subreddits: List[str] = getattr(
@@ -74,81 +111,13 @@ class RedditCollector(Collector):
         self.intents: Dict[str, List[str]] = configured_intents if configured_intents else DEFAULT_INTENTS
         self.max_queries_per_intent: int = getattr(reddit_cfg, "max_queries_per_intent", 1) or 1
 
+        # Credit budget knobs: max_seeds x max_intents x max_queries_per_intent = queries/niche
+        self.max_seeds: int = getattr(reddit_cfg, "max_seeds", 1) or 1
+        self.max_intents: int = getattr(reddit_cfg, "max_intents", 1) or 1
+
         self.max_retries: int = 3
         self.backoff_base: float = 2.0
 
-    # ----------------------------------------------------------------
-    # Backend: Reddit public JSON endpoint (no API key required)
-    # ----------------------------------------------------------------
-    def _search_reddit_json(self, query: str) -> List[Dict[str, Any]]:
-        """Searches Reddit via the public search.json endpoint. Returns normalized results."""
-        params = {
-            "q": query,
-            "sort": self.sort,
-            "t": self.time_filter,
-            "limit": self.limit,
-            "type": "link",
-            "restrict_sr": "",
-        }
-        headers = {"User-Agent": settings.reddit_user_agent}
-
-        for attempt in range(self.max_retries):
-            try:
-                resp = httpx.get(REDDIT_SEARCH_URL, params=params, headers=headers, timeout=15)
-                if resp.status_code == 429 or resp.status_code == 403:
-                    sleep_seconds = self.backoff_base * (attempt + 1)
-                    logger.warning(
-                        f"Reddit JSON {resp.status_code} for query '{query}'. "
-                        f"Retrying in {sleep_seconds}s (attempt {attempt + 1}/{self.max_retries})..."
-                    )
-                    time.sleep(sleep_seconds)
-                    continue
-                resp.raise_for_status()
-
-                data = resp.json()
-                children = data.get("data", {}).get("children", [])
-                results = []
-                for child in children:
-                    post = child.get("data", {})
-                    permalink = post.get("permalink", "")
-                    if not permalink:
-                        continue
-                    title = (post.get("title") or "").strip()
-                    selftext = (post.get("selftext") or "").strip()
-                    score = post.get("score")
-                    subreddit = post.get("subreddit", "")
-
-                    results.append({
-                        "url": f"https://www.reddit.com{permalink}",
-                        "title": title,
-                        "content": selftext if selftext else title,
-                        "score": score,
-                        "subreddit": subreddit,
-                    })
-
-                # Throttle to avoid rate limits
-                time.sleep(self.request_delay)
-                return results
-
-            except httpx.HTTPStatusError as e:
-                logger.warning(f"Reddit JSON HTTP error for query '{query}' (attempt {attempt + 1}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.backoff_base)
-                else:
-                    logger.warning(f"Reddit JSON permanently failed for query '{query}': {e}")
-                    return []
-            except Exception as e:
-                logger.warning(f"Reddit JSON error for query '{query}' (attempt {attempt + 1}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.backoff_base)
-                else:
-                    logger.warning(f"Reddit JSON permanently failed for query '{query}': {e}")
-                    return []
-        return []
-
-    # ----------------------------------------------------------------
-    # Backend: Tavily API (optional, only when use_tavily=True)
-    # ----------------------------------------------------------------
     def _get_supported_tavily_params(self, client: Any) -> Set[str]:
         """Inspects TavilyClient.search signature to safely pass only supported parameters."""
         try:
@@ -205,201 +174,169 @@ class RedditCollector(Collector):
                         return []
         return []
 
-    # ----------------------------------------------------------------
-    # Cache helpers
-    # ----------------------------------------------------------------
-    def _build_query_cache_key(self, query: str, backend: str = "json") -> str:
-        """Constructs an identifier for query-level caching, namespaced by backend."""
+    def _build_query_cache_key(self, query: str) -> str:
+        """Constructs an identifier for query-level caching using core.cache."""
         clean_q = re.sub(r"[^\w\-_]", "_", query.lower()).strip("_")[:50]
-        hash_suffix = hashlib.md5(f"{query}_{self.time_range}_{self.search_depth}_{backend}".encode("utf-8")).hexdigest()[:8]
-        return f"{backend}_query_{clean_q}_{hash_suffix}"
+        hash_suffix = hashlib.md5(f"{query}_{self.time_range}_{self.search_depth}".encode("utf-8")).hexdigest()[:8]
+        return f"query_{clean_q}_{hash_suffix}"
 
-    def _niche_cache_key(self, niche_name: str, backend: str = "json") -> str:
-        """Returns backend-specific niche cache key."""
-        return f"{backend}_{niche_name}"
-
-    # ----------------------------------------------------------------
-    # Main collect method
-    # ----------------------------------------------------------------
     def collect(
         self,
         niche: Niche,
         use_cache: bool = True,
         extra_terms: Optional[List[str]] = None,
     ) -> List[Evidence]:
-        """Collects authentic Reddit discussion threads for the given niche.
+        """Collects authentic Reddit discussion threads for the given niche via Tavily.
 
-        Uses the public Reddit JSON endpoint by default.
-        Optionally supplements with Tavily results when use_tavily=True.
+        Args:
+            niche: Target niche containing seed keywords.
+            use_cache: Whether to read/write query cache.
+            extra_terms: Optional long-tail or rising terms from previous collectors (TODO: hook into pipeline).
+
+        Returns:
+            List of genuine Evidence models linked directly to Reddit comment threads.
         """
-        # 1. Check niche-level cache for JSON backend
+        # 1. Tavily disabled: no Reddit source available, return empty (no silent mock)
+        if not self.use_tavily:
+            logger.warning(
+                f"use_tavily is False. RedditCollector returning empty evidence list for '{niche.name}' "
+                f"(Reddit's public JSON search now requires login, so Tavily is the only working source)."
+            )
+            return []
+
+        # 2. No API key configured: log warning and return empty list (no silent mock)
+        if not self.api_key or not self.api_key.strip():
+            logger.warning(
+                f"TAVILY_API_KEY is not configured. RedditCollector returning empty evidence list for '{niche.name}'."
+            )
+            return []
+
+        # 3. Check niche-level cache first if enabled
         if use_cache:
-            json_cache_key = self._niche_cache_key(niche.name, "json")
-            cached_json = cache.get_raw(self.name, json_cache_key)
-            if cached_json is not None:
-                logger.info(f"Loaded Reddit JSON evidence from niche cache for: {niche.name}")
-                evidence_from_cache = [Evidence(**item) for item in cached_json]
+            cached_niche_data = cache.get_raw(self.name, niche.name)
+            if cached_niche_data is not None:
+                logger.info(f"Loaded Reddit evidence from niche cache for: {niche.name}")
+                return [Evidence(**item) for item in cached_niche_data]
 
-                # If Tavily is enabled, also check Tavily cache
-                if self.use_tavily and self.api_key and self.api_key.strip():
-                    tavily_cache_key = self._niche_cache_key(niche.name, "tavily")
-                    cached_tavily = cache.get_raw(self.name, tavily_cache_key)
-                    if cached_tavily is not None:
-                        logger.info(f"Loaded Reddit Tavily evidence from niche cache for: {niche.name}")
-                        # Dedupe by post_id
-                        seen_ids = {e.post_id for e in evidence_from_cache if e.post_id}
-                        for item in cached_tavily:
-                            ev = Evidence(**item)
-                            if ev.post_id and ev.post_id not in seen_ids:
-                                evidence_from_cache.append(ev)
-                                seen_ids.add(ev.post_id)
-                return evidence_from_cache
+        # 4. Initialize Tavily client
+        try:
+            from tavily import TavilyClient
+            client = TavilyClient(api_key=self.api_key.strip())
+            supported_params = self._get_supported_tavily_params(client)
+        except Exception as e:
+            logger.warning(f"Could not initialize TavilyClient: {e}. RedditCollector returning empty list.")
+            return []
 
-        # 2. Determine keywords to query
+        # 5. Determine keywords to query, capped by credit budget
         seeds = list(niche.seed_keywords) if niche.seed_keywords else [niche.name]
         if extra_terms:
             seeds.extend(extra_terms[:3])
+        seeds = seeds[:self.max_seeds]
+
+        intent_items = list(self.intents.items())[:self.max_intents]
 
         seen_post_ids: Set[str] = set()
-        json_evidence: List[Evidence] = []
-        tavily_evidence: List[Evidence] = []
+        evidence_list: List[Evidence] = []
 
-        # 3. Initialize Tavily client if enabled
-        tavily_client = None
-        tavily_supported_params: Set[str] = set()
-        if self.use_tavily and self.api_key and self.api_key.strip():
-            try:
-                from tavily import TavilyClient
-                tavily_client = TavilyClient(api_key=self.api_key.strip())
-                tavily_supported_params = self._get_supported_tavily_params(tavily_client)
-            except Exception as e:
-                logger.warning(f"Could not initialize TavilyClient: {e}. Tavily supplement disabled.")
-
-        # 4. Query by intent — JSON backend (always runs)
+        # 6. Query by intent
         for seed in seeds:
-            for intent_name, templates in self.intents.items():
+            for intent_name, templates in intent_items:
                 selected_templates = templates[:self.max_queries_per_intent]
 
                 for tmpl in selected_templates:
                     raw_q = tmpl.format(seed=seed).strip()
+                    # Append " reddit" suffix for authentic Reddit phrasing without duplicating
                     query = f"{raw_q} reddit" if not raw_q.lower().endswith("reddit") else raw_q
 
-                    # --- JSON backend ---
-                    json_cache_key = self._build_query_cache_key(query, "json")
+                    cache_key = self._build_query_cache_key(query)
                     raw_results: Optional[List[Dict[str, Any]]] = None
 
+                    # Check query-level cache
                     if use_cache:
-                        raw_results = cache.get_raw(self.name, json_cache_key)
+                        raw_results = cache.get_raw(self.name, cache_key)
                         if raw_results is not None:
-                            logger.debug(f"Loaded {len(raw_results)} cached JSON results for query: '{query}'")
+                            logger.debug(f"Loaded {len(raw_results)} cached Tavily results for query: '{query}'")
 
                     if raw_results is None:
-                        logger.info(f"Querying Reddit JSON [intent={intent_name}]: '{query}'")
-                        raw_results = self._search_reddit_json(query)
-                        if raw_results is not None and use_cache:
-                            cache.set_raw(self.name, json_cache_key, raw_results)
+                        logger.info(f"Querying Tavily [intent={intent_name}]: '{query}'")
+                        raw_results = self._execute_search_with_retry(client, query, supported_params)
+                        # Always persist, even when use_cache=False (which only skips the
+                        # *read* above): matches google_suggest/web_search/serpapi_trends,
+                        # which write unconditionally so raw data is inspectable either way.
+                        if raw_results is not None:
+                            cache.set_raw(self.name, cache_key, raw_results)
 
-                    self._process_results(raw_results, seed, intent_name, query, seen_post_ids, json_evidence)
+                    # 7. Filter and deduplicate
+                    for r in raw_results or []:
+                        url = r.get("url") or ""
+                        match = REDDIT_THREAD_PATTERN.search(url)
+                        if not match:
+                            # Discard search pages, subreddit roots, user profiles
+                            continue
 
-                    # --- Tavily backend (optional) ---
-                    if tavily_client is not None:
-                        tavily_cache_key = self._build_query_cache_key(query, "tavily")
-                        tavily_results: Optional[List[Dict[str, Any]]] = None
+                        subreddit = match.group(1)
+                        post_id = match.group(2).lower()
 
-                        if use_cache:
-                            tavily_results = cache.get_raw(self.name, tavily_cache_key)
-                            if tavily_results is not None:
-                                logger.debug(f"Loaded {len(tavily_results)} cached Tavily results for query: '{query}'")
+                        if post_id in seen_post_ids:
+                            continue
 
-                        if tavily_results is None:
-                            logger.info(f"Querying Tavily [intent={intent_name}]: '{query}'")
-                            tavily_results = self._execute_search_with_retry(tavily_client, query, tavily_supported_params)
-                            if tavily_results is not None and use_cache:
-                                cache.set_raw(self.name, tavily_cache_key, tavily_results)
+                        title = (r.get("title") or "").strip()
+                        if not title:
+                            continue
 
-                        self._process_results(tavily_results, seed, intent_name, query, seen_post_ids, tavily_evidence)
+                        # Strip page-chrome junk (nav menus, login prompts, reply artifacts)
+                        # before truncating, so the 40-char minimum below checks real content.
+                        content = _strip_boilerplate((r.get("content") or "").strip())
+                        snippet = content[:500].strip()
+                        if len(snippet) < 40:
+                            # Drop records with too short snippets
+                            continue
 
-        # 5. Merge results: JSON first, then Tavily supplements
-        all_evidence = json_evidence + tavily_evidence
+                        seen_post_ids.add(post_id)
 
-        # 6. Prioritize preferred subreddits
+                        # Extract relevance score (never call it upvotes)
+                        score_val = r.get("score")
+                        relevance: Optional[float] = None
+                        if score_val is not None:
+                            try:
+                                relevance = float(score_val)
+                            except (ValueError, TypeError):
+                                relevance = None
+
+                        # Retain canonical thread URL
+                        canonical_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/"
+
+                        ev = Evidence(
+                            source=self.name,
+                            intent=intent_name,
+                            subreddit=subreddit,
+                            post_id=post_id,
+                            title=title,
+                            snippet=snippet,
+                            relevance=relevance,
+                            keyword=seed,
+                            source_url=canonical_url,
+                            query_used=query,
+                            text=snippet,
+                            value=None,  # No fabricated upvotes or metrics
+                            kind="complaint",  # Compatible with downstream pipeline
+                            is_mock=False,
+                        )
+                        evidence_list.append(ev)
+
+        # 8. Prioritize preferred subreddits
         pref_lower = {s.lower() for s in self.preferred_subreddits}
-        all_evidence.sort(
+        evidence_list.sort(
             key=lambda item: 0 if (item.subreddit and item.subreddit.lower() in pref_lower) else 1
         )
 
-        # 7. Save niche-level cache per backend
-        if use_cache:
-            if json_evidence:
-                cache.set_raw(self.name, self._niche_cache_key(niche.name, "json"),
-                              [item.model_dump() for item in json_evidence])
-            if tavily_evidence:
-                cache.set_raw(self.name, self._niche_cache_key(niche.name, "tavily"),
-                              [item.model_dump() for item in tavily_evidence])
+        # 9. Lưu cache dữ liệu thô cấp Niche (data/raw/reddit_{niche_name}.json) đồng bộ với các collector khác.
+        # Ghi luôn kể cả khi use_cache=False (cờ đó chỉ chặn việc ĐỌC ở bước 3), khớp hành vi
+        # của google_suggest/web_search/serpapi_trends.
+        if evidence_list:
+            cache.set_raw(self.name, niche.name, [item.model_dump() for item in evidence_list])
 
         logger.info(
-            f"RedditCollector finished for niche '{niche.name}': "
-            f"{len(json_evidence)} JSON + {len(tavily_evidence)} Tavily = {len(all_evidence)} total records."
+            f"RedditCollector finished for niche '{niche.name}': {len(evidence_list)} genuine thread records collected."
         )
-        return all_evidence
-
-    def _process_results(
-        self,
-        raw_results: Optional[List[Dict[str, Any]]],
-        seed: str,
-        intent_name: str,
-        query: str,
-        seen_post_ids: Set[str],
-        evidence_list: List[Evidence],
-    ) -> None:
-        """Filters, deduplicates, and converts raw search results to Evidence objects."""
-        for r in raw_results or []:
-            url = r.get("url") or ""
-            match = REDDIT_THREAD_PATTERN.search(url)
-            if not match:
-                continue
-
-            subreddit = match.group(1)
-            post_id = match.group(2).lower()
-
-            if post_id in seen_post_ids:
-                continue
-
-            title = (r.get("title") or "").strip()
-            if not title:
-                continue
-
-            content = (r.get("content") or "").strip()
-            snippet = content[:500].strip()
-            if len(snippet) < 40:
-                continue
-
-            seen_post_ids.add(post_id)
-
-            score_val = r.get("score")
-            relevance: Optional[float] = None
-            if score_val is not None:
-                try:
-                    relevance = float(score_val)
-                except (ValueError, TypeError):
-                    relevance = None
-
-            canonical_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/"
-
-            ev = Evidence(
-                source=self.name,
-                intent=intent_name,
-                subreddit=subreddit,
-                post_id=post_id,
-                title=title,
-                snippet=snippet,
-                relevance=relevance,
-                keyword=seed,
-                source_url=canonical_url,
-                query_used=query,
-                text=snippet,
-                value=None,
-                kind="complaint",
-                is_mock=False,
-            )
-            evidence_list.append(ev)
+        return evidence_list

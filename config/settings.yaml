@@ -25,15 +25,13 @@ collectors:
     cooldown_minutes: 60
     include_interest_over_time: false
   reddit:
-    request_delay: 3.0
-    limit: 10
-    sort: "relevance"
-    time_filter: "month"
-    use_tavily: false
-    max_results_per_query: 5
-    max_queries_per_intent: 1
+    use_tavily: true
     time_range: "year"
     search_depth: "basic"
+    max_seeds: 1
+    max_intents: 2
+    max_queries_per_intent: 1
+    max_results_per_query: 10
     preferred_subreddits:
       - "gifts"
       - "GiftIdeas"
@@ -42,15 +40,15 @@ collectors:
       - "AskWomen"
       - "Etsy"
     intents:
-      ask:
-        - "looking for {seed}"
-        - "what should I get {seed}"
       pain:
         - "{seed} hard to choose"
         - "{seed} who has everything"
       regret:
         - "{seed} waste of money"
         - "regret buying {seed}"
+      ask:
+        - "looking for {seed}"
+        - "what should I get {seed}"
       recommend:
         - "best {seed} worth it"
         - "{seed} actually use"
@@ -59,6 +57,22 @@ collectors:
   google_suggest:
     client: "firefox"
     hl: "en"
+    providers:
+      - "google"
+      - "duckduckgo"
+      - "bing"
+    request_delay: 1.0
+    max_suggestions: 6
+
+digest:
+  max_items: 25
+  max_items_llm: 35
+  source_priority:
+    - "reddit"
+    - "serpapi_trends"
+    - "google_trends"
+    - "web_search"
+    - "google_suggest"
 
 cache:
   enabled: true

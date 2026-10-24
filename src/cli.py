@@ -75,7 +75,7 @@ def run(
     digest_model: Optional[str] = typer.Option(None, "--digest-model", help="Tên model digest"),
     trend_source: Optional[str] = typer.Option(None, "--trend-source", help="Nguồn dữ liệu Trend: google_trends | serpapi"),
     use_cache: bool = typer.Option(True, "--cache/--no-cache", help="Có sử dụng dữ liệu đã cache hay không"),
-    use_tavily: bool = typer.Option(False, "--tavily/--no-tavily", help="Bật Tavily cho Web Search + Reddit bổ sung (tốn credit)"),
+    use_tavily: bool = typer.Option(True, "--tavily/--no-tavily", help="Dùng Tavily cho Reddit + Web Search. Reddit JSON công khai đã bị chặn (yêu cầu đăng nhập), nên tắt cờ này sẽ không có dữ liệu Reddit."),
 ):
     """Executes the full AI trend research pipeline and outputs a Markdown report."""
     category, all_niches = load_niches()

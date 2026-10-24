@@ -34,7 +34,7 @@ class PipelineRunner:
         trend_provider: Optional[str] = None,
         api_key_serpapi: Optional[str] = None,
         use_cache: bool = True,
-        use_tavily: bool = False,
+        use_tavily: bool = True,
     ):
         self.digest_provider = digest_provider or settings.llm.digest.provider
         self.digest_model = digest_model or settings.llm.digest.model

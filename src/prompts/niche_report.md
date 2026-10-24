@@ -14,7 +14,15 @@ Viết bằng tiếng Việt tự nhiên, nhưng giữ nguyên các từ khóa g
    - Vì sao bán bây giờ (`why_now`)
    - Mỗi ý tưởng phải trích dẫn `evidence_refs` (danh sách `source_url` thực tế có trong EVIDENCE làm căn cứ).
 6. Đánh giá `trend`: chỉ chọn một trong 3 giá trị: "tăng", "ổn định", "giảm".
-7. Chấm điểm tiềm năng `score` là một số nguyên từ 1 đến 10 kèm lý do `score_reason`.
+7. Chấm điểm tiềm năng `score` (số nguyên 1–10) dựa trên EVIDENCE THỰC TẾ, không phải cảm tính:
+   - **9–10**: Có dữ liệu xu hướng TĂNG từ Google Trends/SerpApi VÀ có pain points rõ ràng từ Reddit/cộng đồng VÀ có ≥4 nguồn evidence khác nhau.
+   - **7–8**: Có dữ liệu xu hướng từ ít nhất 1 nguồn định lượng (Trends/SerpApi) VÀ có tín hiệu tìm kiếm (Google Suggest).
+   - **5–6**: Chỉ có tín hiệu tìm kiếm (Google Suggest) hoặc chỉ có thảo luận cộng đồng, THIẾU dữ liệu xu hướng định lượng.
+   - **3–4**: Dữ liệu rất mỏng, chỉ 1–2 nguồn, không có tín hiệu rõ ràng.
+   - **1–2**: Gần như không có evidence hỗ trợ.
+   `score_reason` PHẢI liệt kê cụ thể: nguồn nào CÓ dữ liệu, nguồn nào THIẾU, và điều đó ảnh hưởng thế nào đến đánh giá.
+   Ví dụ đúng: "7/10 — Google Suggest cho thấy nhu cầu tìm kiếm cao (18 gợi ý), Reddit có 9 thảo luận về pain points thực tế, nhưng SerpApi Trends không trả kết quả nên không xác nhận được xu hướng tăng/giảm bằng số liệu."
+   Ví dụ sai: "9/10 — Tiềm năng tăng trưởng cao" (không nêu căn cứ cụ thể).
 
 ## CẤU TRÚC JSON BẮT BUỘC TRẢ VỀ:
 ```json

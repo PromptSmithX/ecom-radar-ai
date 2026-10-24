@@ -30,9 +30,20 @@ def test_collectors_inheritance():
         assert hasattr(cls, "name")
 
 
-def test_google_suggest_collector(sample_niche):
+@patch("src.collectors.google_suggest.httpx.Client")
+def test_google_suggest_collector(mock_client_cls, sample_niche):
+    """Google Suggest returns suggestions via the (mocked) HTTP client, no live network call."""
+    mock_client = MagicMock()
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = ["christmas gift ideas", ["christmas gift ideas for mom", "christmas gift ideas for dad"]]
+    mock_client.get.return_value = mock_resp
+
     collector = GoogleSuggestCollector()
-    results = collector.collect(sample_niche)
+    collector.request_delay = 0
+    results = collector.collect(sample_niche, use_cache=False)
     assert isinstance(results, list)
     assert len(results) > 0
     for item in results:
@@ -40,34 +51,26 @@ def test_google_suggest_collector(sample_niche):
         assert item.source == "google_suggest"
         assert item.source_url.startswith("http")
         assert item.kind == "keyword_signal"
+        assert "Google Autocomplete" in item.text
 
 
-@patch("src.collectors.reddit.httpx.get")
-def test_reddit_collector(mock_get, sample_niche):
-    """RedditCollector with JSON backend (default) parses results correctly."""
-    json_data = {
-        "data": {
-            "children": [
-                {
-                    "data": {
-                        "permalink": "/r/gifts/comments/abc123/best_gifts/",
-                        "title": "Best Christmas gifts under $50",
-                        "selftext": "Authentic feedback about quality gifts that do not break the bank for the holidays.",
-                        "score": 42,
-                        "subreddit": "gifts",
-                    }
-                }
-            ]
-        }
+@patch("tavily.TavilyClient")
+def test_reddit_collector(mock_tavily_cls, sample_niche):
+    """RedditCollector sources Reddit threads via Tavily (Reddit's own JSON search
+    now requires login)."""
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+    mock_client.search.return_value = {
+        "results": [
+            {
+                "title": "Best Christmas gifts under $50",
+                "url": "https://www.reddit.com/r/gifts/comments/abc123/best_gifts/",
+                "content": "Authentic feedback about quality gifts that do not break the bank for the holidays.",
+                "score": 0.9,
+            }
+        ]
     }
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = json_data
-    mock_resp.raise_for_status.return_value = None
-    mock_get.return_value = mock_resp
-
-    collector = RedditCollector(use_tavily=False)
-    collector.request_delay = 0
+    collector = RedditCollector(api_key="tvly-test-key", use_tavily=True)
     results = collector.collect(sample_niche, use_cache=False)
     assert isinstance(results, list)
     assert len(results) > 0
@@ -162,23 +165,31 @@ def test_google_trends_skips_real_call_during_cooldown(cleanup_trends_cooldown):
 
 
 def test_build_collectors_excludes_websearch_without_tavily():
-    """When use_tavily=False (default), WebSearchCollector is not included."""
+    """When use_tavily=False, WebSearchCollector is not included and RedditCollector
+    has no working source (Reddit's own JSON search requires login)."""
     collectors = build_collectors(use_tavily=False)
     collector_types = [type(c) for c in collectors]
     assert WebSearchCollector not in collector_types
     assert RedditCollector in collector_types
-    # Verify RedditCollector has use_tavily=False
     reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
     assert reddit.use_tavily is False
 
 
 def test_build_collectors_includes_websearch_with_tavily():
-    """When use_tavily=True, WebSearchCollector is included."""
+    """When use_tavily=True (default), WebSearchCollector is included."""
     collectors = build_collectors(use_tavily=True)
     collector_types = [type(c) for c in collectors]
     assert WebSearchCollector in collector_types
     assert RedditCollector in collector_types
-    # Verify RedditCollector has use_tavily=True
+    reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
+    assert reddit.use_tavily is True
+
+
+def test_build_collectors_default_enables_tavily():
+    """build_collectors() with no explicit use_tavily argument defaults to True."""
+    collectors = build_collectors()
+    collector_types = [type(c) for c in collectors]
+    assert WebSearchCollector in collector_types
     reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
     assert reddit.use_tavily is True
 

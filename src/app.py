@@ -112,11 +112,12 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("#### 🔍 Tavily (Tùy chọn)")
+    st.markdown("#### 🔍 Tavily")
     use_tavily = st.checkbox(
-        "Dùng Tavily (Web Search + Reddit bổ sung)",
-        value=False,
-        help="Bật để dùng Tavily API cho Web Search và bổ sung thêm Reddit data. Tốn credit Tavily. Mặc định Reddit dùng endpoint JSON công khai miễn phí.",
+        "Dùng Tavily (Reddit + Web Search)",
+        value=True,
+        help="Reddit đã chặn tìm kiếm ẩn danh (bắt buộc đăng nhập) nên Tavily là nguồn duy nhất cho dữ liệu Reddit. "
+             "Tắt đi sẽ KHÔNG có dữ liệu Reddit và bỏ qua Web Search. Chi phí mặc định ~1 credit/niche.",
     )
 
     with st.expander("🔑 Cấu hình API Keys"):

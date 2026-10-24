@@ -30,6 +30,47 @@ class ReportValidator:
         cleaned = UPVOTE_PATTERN.sub(repl, text)
         return re.sub(r"\s{2,}", " ", cleaned).strip()
 
+    @staticmethod
+    def _adjust_score_by_evidence(report: NicheReport, evidence_pack: List[Evidence]) -> NicheReport:
+        """Caps score based on actual evidence diversity. The writer LLM is free to
+        rate a niche optimistically even when key sources (e.g. SerpApi trend data)
+        returned nothing — nothing in the prompt or elsewhere in this validator ties
+        score to evidence completeness, so this closes that gap in code."""
+        sources_present = {e.source for e in evidence_pack if e.source}
+
+        has_trend_data = bool(sources_present & {"serpapi_trends", "google_trends"})
+        has_community = bool(sources_present & {"reddit", "web_search"})
+        has_suggest = "google_suggest" in sources_present
+        source_count = len(sources_present)
+
+        max_allowed = 10
+        if source_count <= 1:
+            max_allowed = 4
+        elif not has_trend_data and not has_community:
+            max_allowed = 5
+        elif not has_trend_data:
+            max_allowed = 7
+
+        if report.score > max_allowed:
+            original = report.score
+            report.score = max_allowed
+
+            missing = []
+            if not has_trend_data:
+                missing.append("thiếu dữ liệu xu hướng định lượng (SerpApi/Google Trends)")
+            if not has_community:
+                missing.append("thiếu dữ liệu thảo luận cộng đồng (Reddit)")
+            if not has_suggest:
+                missing.append("thiếu dữ liệu gợi ý tìm kiếm (Google Suggest)")
+
+            gap_note = f" [Validator: điểm gốc LLM={original}, hạ xuống {max_allowed} vì {'; '.join(missing)}]"
+            report.score_reason = (report.score_reason or "") + gap_note
+            logger.warning(
+                f"Niche '{report.niche}' score capped from {original} to {max_allowed}: {'; '.join(missing)}"
+            )
+
+        return report
+
     @classmethod
     def validate_niche_report(cls, report: NicheReport, evidence_pack: List[Evidence]) -> NicheReport:
         """Enforces anti-hallucination rules:
@@ -38,6 +79,7 @@ class ReportValidator:
         3. Ensures at least 2 ideas exist.
         4. Validates price_range and trend values.
         5. Strips fabricated upvote counts if not supported by evidence.
+        6. Caps score when evidence sources are missing/thin, regardless of what the LLM chose.
         """
         valid_urls: Set[str] = {e.source_url.strip() for e in evidence_pack if e.source_url}
         default_fallback_url = "[không có nguồn khớp]"
@@ -144,4 +186,8 @@ class ReportValidator:
             )
 
         report.ideas = cleaned_ideas
+
+        # 6. Cap score to match evidence diversity actually present
+        report = cls._adjust_score_by_evidence(report, evidence_pack)
+
         return report
