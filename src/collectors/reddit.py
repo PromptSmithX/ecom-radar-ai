@@ -27,6 +27,13 @@ REDDIT_THREAD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_INTENT_TO_KIND: Dict[str, str] = {
+    "pain": "complaint",
+    "regret": "complaint",
+    "ask": "question",
+    "recommend": "recommendation",
+}
+
 DEFAULT_INTENTS: Dict[str, List[str]] = {
     "pain": [
         "{seed} hard to choose",
@@ -69,6 +76,32 @@ _BOILERPLATE_PATTERNS = [
         r"\[deleted\]",
     ]
 ]
+
+
+def _is_near_duplicate(
+    new_snippet: str,
+    existing_snippets: List[str],
+    threshold: float = 0.6,
+) -> bool:
+    """Return True if *new_snippet* is semantically near-duplicate of any
+    snippet already collected (Jaccard similarity on lowercased word tokens).
+
+    A threshold of 0.6 means ≥60 % shared words — conservative enough to only
+    catch truly overlapping Tavily search-result mashups while keeping distinct
+    threads that happen to discuss the same broad topic.
+    """
+    new_tokens = set(new_snippet.lower().split())
+    if not new_tokens:
+        return False
+    for existing in existing_snippets:
+        existing_tokens = set(existing.lower().split())
+        if not existing_tokens:
+            continue
+        intersection = new_tokens & existing_tokens
+        union = new_tokens | existing_tokens
+        if len(intersection) / len(union) >= threshold:
+            return True
+    return False
 
 
 def _strip_boilerplate(text: str) -> str:
@@ -236,6 +269,7 @@ class RedditCollector(Collector):
         intent_items = list(self.intents.items())[:self.max_intents]
 
         seen_post_ids: Set[str] = set()
+        collected_snippets: List[str] = []
         evidence_list: List[Evidence] = []
 
         # 6. Query by intent
@@ -292,7 +326,15 @@ class RedditCollector(Collector):
                             # Drop records with too short snippets
                             continue
 
+                        # Semantic dedup: skip if snippet overlaps ≥60 % with one already kept
+                        if _is_near_duplicate(snippet, collected_snippets):
+                            logger.debug(
+                                f"Dropping near-duplicate snippet (post_id={post_id}) for niche '{niche.name}'"
+                            )
+                            continue
+
                         seen_post_ids.add(post_id)
+                        collected_snippets.append(snippet)
 
                         # Extract relevance score (never call it upvotes)
                         score_val = r.get("score")
@@ -319,7 +361,7 @@ class RedditCollector(Collector):
                             query_used=query,
                             text=snippet,
                             value=None,  # No fabricated upvotes or metrics
-                            kind="complaint",  # Compatible with downstream pipeline
+                            kind=_INTENT_TO_KIND.get(intent_name, "discussion"),
                             is_mock=False,
                         )
                         evidence_list.append(ev)

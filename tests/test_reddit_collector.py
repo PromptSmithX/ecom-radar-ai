@@ -7,7 +7,7 @@ Reddit's own public search now requires login (old.reddit.com/search.json redire
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
-from src.collectors.reddit import REDDIT_THREAD_PATTERN, RedditCollector
+from src.collectors.reddit import REDDIT_THREAD_PATTERN, RedditCollector, _is_near_duplicate
 from src.core.cache import cache
 from src.core.models import Evidence, Niche
 
@@ -359,3 +359,109 @@ def test_query_caching(mock_tavily_cls):
     assert mock_client.search.call_count == initial_search_calls
     assert len(results2) == len(results1)
     assert results2[0].post_id == results1[0].post_id
+
+
+# ---------------------------------------------------------------------------
+# Semantic dedup tests
+# ---------------------------------------------------------------------------
+
+
+def test_is_near_duplicate_detects_overlap():
+    """Snippets sharing >=60% words should be flagged as near-duplicates."""
+    existing = ["hard to buy gifts for people who have everything I love this subreddit for ideas and recommendations"]
+    almost_same = "hard to buy gifts for people who have everything I love this subreddit for ideas and inspiration"
+    assert _is_near_duplicate(almost_same, existing, threshold=0.6)
+
+
+def test_is_near_duplicate_passes_distinct():
+    """Snippets with substantially different content must NOT be flagged."""
+    existing = ["hard to buy gifts for people who have everything I love this subreddit"]
+    different = "Best personalized jewelry shops on Etsy for Valentine's Day under fifty dollars"
+    assert not _is_near_duplicate(different, existing, threshold=0.6)
+
+
+def test_is_near_duplicate_empty_inputs():
+    """Empty snippet or empty existing list must return False, not crash."""
+    assert not _is_near_duplicate("", ["some text"])
+    assert not _is_near_duplicate("some text", [])
+    assert not _is_near_duplicate("", [])
+
+
+@patch("tavily.TavilyClient")
+def test_semantic_dedup_drops_overlapping_snippets(mock_tavily_cls, sample_niche):
+    """Two threads with different post_ids but near-identical content should be
+    deduplicated down to one evidence item."""
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+
+    shared_text = (
+        "hard to buy gifts for people who have everything "
+        "I am in love with this subreddit for gift ideas"
+    )
+    mock_client.search.return_value = {
+        "results": [
+            {
+                "title": "Gift ideas thread A",
+                "url": "https://www.reddit.com/r/GiftIdeas/comments/aaa111/thread_a/",
+                "content": shared_text,
+                "score": 0.8,
+            },
+            {
+                "title": "Gift ideas thread B",
+                "url": "https://www.reddit.com/r/Gifts/comments/bbb222/thread_b/",
+                "content": shared_text + " extra word",
+                "score": 0.75,
+            },
+        ]
+    }
+
+    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
+    results = collector.collect(sample_niche, use_cache=False)
+
+    assert len(results) == 1
+    assert results[0].post_id == "aaa111"
+
+
+# ---------------------------------------------------------------------------
+# Kind mapping tests
+# ---------------------------------------------------------------------------
+
+
+@patch("tavily.TavilyClient")
+def test_kind_mapped_from_intent(mock_tavily_cls, sample_niche):
+    """Evidence `kind` must reflect the query intent, not a hardcoded value.
+    With default budget (pain + regret), both map to 'complaint'."""
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+
+    # Return distinct posts with completely different content per call
+    # so semantic dedup does not collapse them.
+    distinct_contents = [
+        "My dad is impossible to shop for. He never tells us what he wants and returns everything we buy him.",
+        "I bought an expensive watch last year and totally regret it. Complete waste of money for something nobody wears.",
+    ]
+    call_count = {"n": 0}
+    def side_effect(**kwargs):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        pid = f"kind{idx + 1}"
+        return {
+            "results": [
+                {
+                    "title": f"Thread {pid}",
+                    "url": f"https://www.reddit.com/r/gifts/comments/{pid}/test/",
+                    "content": distinct_contents[idx % len(distinct_contents)],
+                    "score": 0.9,
+                }
+            ]
+        }
+
+    mock_client.search.side_effect = side_effect
+
+    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
+    results = collector.collect(sample_niche, use_cache=False)
+
+    assert len(results) == 2
+    # Both pain and regret map to "complaint"
+    for r in results:
+        assert r.kind == "complaint", f"Expected 'complaint' for intent '{r.intent}', got '{r.kind}'"
