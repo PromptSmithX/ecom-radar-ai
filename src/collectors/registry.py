@@ -7,6 +7,7 @@ from src.core.config import settings
 from src.core.models import Evidence, Niche
 from .amazon import AmazonCollector
 from .base import Collector
+from .etsy import EtsyCollector
 from .google_suggest import GoogleSuggestCollector
 from .google_trends import GoogleTrendsCollector
 from .reddit import RedditCollector
@@ -21,11 +22,10 @@ COLLECTORS: List[Type[Collector]] = [
     RedditCollector,
     WebSearchCollector,
     AmazonCollector,
+    EtsyCollector,
 ]
 
-# Interchangeable trend-data providers: GoogleTrendsCollector's slot in COLLECTORS can be
-# swapped at runtime for SerpApiTrendsCollector (chosen via UI/CLI/config) without touching
-# the canonical collector list above.
+# Interchangeable trend-data providers: GoogleTrendsCollector vs SerpApiTrendsCollector
 TREND_PROVIDERS: Dict[str, Type[Collector]] = {
     "google_trends": GoogleTrendsCollector,
     "serpapi": SerpApiTrendsCollector,
@@ -35,36 +35,26 @@ TREND_PROVIDERS: Dict[str, Type[Collector]] = {
 def build_collectors(
     trend_provider: Optional[str] = None,
     trend_api_key: Optional[str] = None,
-    use_tavily: bool = True,
     use_amazon: Optional[bool] = None,
+    use_etsy: Optional[bool] = None,
 ) -> List[Collector]:
-    """Instantiates the canonical collector list, substituting whichever trend provider
-    (Google Trends vs SerpApi) was requested in place of the default GoogleTrendsCollector slot.
-
-    Reddit's own public search now requires login, so Tavily is its only working source;
-    use_tavily=True (default) enables both RedditCollector and WebSearchCollector.
-    Setting use_tavily=False skips WebSearchCollector entirely and makes RedditCollector
-    return no evidence (no Reddit data available without Tavily).
-
-    use_amazon defaults to AmazonCollector's `enabled` config flag when None, so callers
-    that don't care can omit it and still respect config/settings.yaml.
+    """Instantiates the canonical collector list.
+    All collectors (Reddit, Amazon, Etsy, WebSearch, Suggest) run 100% free without Tavily.
     """
     trend_provider = trend_provider or settings.collectors.trend_provider
     trend_cls = TREND_PROVIDERS.get(trend_provider, GoogleTrendsCollector)
     use_amazon = settings.collectors.amazon.enabled if use_amazon is None else use_amazon
+    use_etsy = settings.collectors.etsy.enabled if use_etsy is None else use_etsy
 
     instances: List[Collector] = []
     for cls in COLLECTORS:
         if cls in TREND_PROVIDERS.values():
             instances.append(trend_cls(api_key=trend_api_key) if trend_provider == "serpapi" else trend_cls())
-        elif cls is RedditCollector:
-            instances.append(cls(use_tavily=use_tavily))
-        elif cls is WebSearchCollector:
-            if use_tavily:
-                instances.append(cls())
-            # else: skip WebSearchCollector — it only uses Tavily
         elif cls is AmazonCollector:
             if use_amazon:
+                instances.append(cls())
+        elif cls is EtsyCollector:
+            if use_etsy:
                 instances.append(cls())
         else:
             instances.append(cls())

@@ -107,29 +107,24 @@ with st.sidebar:
         "Chọn nguồn Google Trends:",
         options=["google_trends", "serpapi"],
         index=0 if settings.collectors.trend_provider != "serpapi" else 1,
-        format_func=lambda v: "Google Trends (pytrends - miễn phí, dễ bị 429)" if v == "google_trends" else "SerpApi (free tier 250 request/tháng)",
-        help="Dùng SerpApi khi Google Trends (pytrends) bị rate limit 429 liên tục.",
+        format_func=lambda v: "Google Trends (pytrends - miễn phí)" if v == "google_trends" else "SerpApi (free tier 250 request/tháng)",
+        help="Dùng SerpApi khi Google Trends (pytrends) bị rate limit 429.",
     )
 
     st.markdown("---")
-    st.markdown("#### 🔍 Tavily")
-    use_tavily = st.checkbox(
-        "Dùng Tavily (Reddit + Web Search)",
-        value=True,
-        help="Reddit đã chặn tìm kiếm ẩn danh (bắt buộc đăng nhập) nên Tavily là nguồn duy nhất cho dữ liệu Reddit. "
-             "Tắt đi sẽ KHÔNG có dữ liệu Reddit và bỏ qua Web Search. Chi phí mặc định ~1 credit/niche.",
-    )
-
-    st.markdown("---")
-    st.markdown("#### 🛒 Nguồn bổ sung (miễn phí, không cần key)")
+    st.markdown("#### 🛒 Nguồn E-commerce & MXH (100% Free)")
     use_amazon = st.checkbox(
-        "Dùng Amazon (search results: giá, rating, Best Seller)",
+        "Dùng Amazon (giá, rating, review, Best Seller)",
         value=settings.collectors.amazon.enabled,
-        help="Cào trang kết quả tìm kiếm Amazon theo seed keyword để lấy giá, rating, số review và badge Best Seller/Amazon's Choice. "
-             "Không cần API key, nhưng Amazon có thể chặn IP (503/CAPTCHA) — khi đó sẽ không có dữ liệu cho tới khi hết cooldown.",
+        help="Cào kết quả tìm kiếm Amazon và gợi ý từ khóa bằng Playwright Stealth. 100% Free, không cần key.",
+    )
+    use_etsy = st.checkbox(
+        "Dùng Etsy (sản phẩm thủ công, giá đối thủ)",
+        value=settings.collectors.etsy.enabled,
+        help="Khảo sát listing sản phẩm và giá từ các shop trên Etsy qua DuckDuckGo indexing. 100% Free.",
     )
 
-    with st.expander("🔑 Cấu hình API Keys"):
+    with st.expander("🔑 Cấu hình API Keys (LLM & Trend)"):
         gemini_key = st.text_input(
             "Gemini API Key:",
             value=settings.gemini_api_key or "",
@@ -141,20 +136,11 @@ with st.sidebar:
             value=settings.openai_api_key or "",
             type="password",
         )
-        if use_tavily:
-            tavily_key = st.text_input(
-                "Tavily API Key:",
-                value=settings.tavily_api_key or "",
-                type="password",
-                help="Cần khi bật Tavily ở trên. Lấy tại tavily.com.",
-            )
-        else:
-            tavily_key = settings.tavily_api_key or ""
         serpapi_key = st.text_input(
             "SerpApi Key (Tùy chọn):",
             value=settings.serpapi_api_key or "",
             type="password",
-            help="Lấy tại serpapi.com. Chỉ cần khi chọn nguồn Trend 'SerpApi' ở trên. Free tier 250 request/tháng.",
+            help="Lấy tại serpapi.com. Chỉ cần khi chọn nguồn Trend 'SerpApi' ở trên.",
         )
 
     use_cache = st.checkbox("Sử dụng Cache (Chạy nhanh & Tiết kiệm)", value=True)
@@ -170,7 +156,7 @@ with st.sidebar:
 # MAIN INTERFACE
 # ==========================================
 st.markdown('<div class="main-header">📈 AI Product Trend Research Tool</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Tự động thu thập tín hiệu xu hướng, phân tích thị trường & đề xuất ý tưởng sản phẩm e-commerce</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Tự động thu thập tín hiệu xu hướng, phân tích thị trường & đề xuất ý tưởng sản phẩm e-commerce (Chế độ 100% Miễn phí $0 API cào)</div>', unsafe_allow_html=True)
 
 # Handle Run Action
 if run_button:
@@ -192,11 +178,7 @@ if run_button:
             writer_provider = "mock"
 
         if trend_provider == "serpapi" and not active_serpapi_key:
-            st.warning("⚠️ Chưa phát hiện SerpApi Key. Sẽ bỏ qua thu thập Trend (evidence rỗng) cho bước này, các nguồn khác vẫn chạy bình thường.")
-
-        active_tavily_key = tavily_key.strip() if tavily_key else settings.tavily_api_key
-        if use_tavily and not active_tavily_key:
-            st.warning("⚠️ Bật Tavily nhưng chưa có API Key. Web Search và Reddit bổ sung sẽ không hoạt động.")
+            st.warning("⚠️ Chưa phát hiện SerpApi Key. Sẽ bỏ qua thu thập Trend qua SerpApi, các nguồn khác vẫn chạy bình thường.")
 
         progress_container = st.container()
         with progress_container:
@@ -220,8 +202,8 @@ if run_button:
             trend_provider=trend_provider,
             api_key_serpapi=active_serpapi_key,
             use_cache=use_cache,
-            use_tavily=use_tavily,
             use_amazon=use_amazon,
+            use_etsy=use_etsy,
         )
 
         try:
@@ -322,12 +304,13 @@ with tab_about:
         """
 ### 📖 Về dự án: AI Product Trend Research Tool (MVP)
 - **Mục tiêu:** Tự động hóa quá trình nghiên cứu xu hướng và tìm kiếm ý tưởng sản phẩm e-commerce.
-- **Nguồn dữ liệu:**
-  1. **Google Autocomplete:** Gợi ý từ khóa liên quan thời gian thực.
-  2. **Google Trends:** Chỉ số mức độ quan tâm và các từ khóa đang bứt phá (breakout/rising). Có thể chọn lấy qua **pytrends** (miễn phí, dễ bị 429) hoặc **SerpApi** (free tier 250 request/tháng, ổn định hơn) ở thanh bên trái.
-  3. **Reddit Community:** Trích xuất các khó khăn, than phiền thực tế từ người dùng (`r/gifts`, `r/BuyItForLife`, `r/AskMen`...).
-  4. **Web Search / Market Benchmarks:** Khảo sát đối thủ, mức giá thị trường.
-  5. **Amazon (tùy chọn):** Cào trang kết quả tìm kiếm theo seed keyword — tên sản phẩm, giá, rating, số review, badge Best Seller/Amazon's Choice. Miễn phí, không cần key, nhưng có thể bị Amazon chặn IP tạm thời.
+- **Nguồn dữ liệu 100% Miễn phí:**
+  1. **Google Autocomplete:** Gợi ý từ khóa liên quan thời gian thực (fallback DuckDuckGo/Bing).
+  2. **Google Trends:** Chỉ số mức độ quan tâm và các từ khóa bứt phá (breakout/rising).
+  3. **Reddit Community:** Trích xuất các khó khăn, than phiền thực tế kèm upvotes thật và comments thật từ người dùng qua Playwright Stealth.
+  4. **Amazon Products:** Cào giá bán, số lượt đánh giá, rating sao và huy hiệu Best Seller bằng Playwright Stealth.
+  5. **Etsy Marketplace:** Khảo sát giá và sản phẩm thủ công từ các shop đối thủ trên Etsy.
+  6. **DuckDuckGo Web Search:** Khảo sát benchmark thị trường không tốn phí API.
 - **Nguyên tắc chống bịa số:** Mọi số liệu trong báo cáo đều được trích xuất từ dữ liệu thô, nếu thiếu sẽ hiển thị *"Không có dữ liệu"*.
 """
     )

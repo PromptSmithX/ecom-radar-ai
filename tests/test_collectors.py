@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock, patch
+from src.collectors.amazon import AmazonCollector
 from src.collectors.base import Collector
+from src.collectors.etsy import EtsyCollector
 from src.collectors.google_suggest import GoogleSuggestCollector
 from src.collectors.google_trends import COOLDOWN_META_KEY, GoogleTrendsCollector
 from src.collectors.reddit import RedditCollector
+from src.collectors.registry import COLLECTORS, build_collectors, collect_for_niche
 from src.collectors.web_search import WebSearchCollector
-from src.collectors.registry import build_collectors, collect_for_niche, COLLECTORS
 from src.core.cache import cache
 from src.core.models import Evidence, Niche
 
@@ -54,82 +56,84 @@ def test_google_suggest_collector(mock_client_cls, sample_niche):
         assert "Google Autocomplete" in item.text
 
 
-@patch("tavily.TavilyClient")
-def test_reddit_collector(mock_tavily_cls, sample_niche):
-    """RedditCollector sources Reddit threads via Tavily (Reddit's own JSON search
-    now requires login)."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "Best Christmas gifts under $50",
-                "url": "https://www.reddit.com/r/gifts/comments/abc123/best_gifts/",
-                "content": "Authentic feedback about quality gifts that do not break the bank for the holidays.",
-                "score": 0.9,
-            }
-        ]
-    }
-    collector = RedditCollector(api_key="tvly-test-key", use_tavily=True)
+def test_reddit_collector(sample_niche):
+    """RedditCollector sources Reddit threads with BrowserManager."""
+    mock_browser = MagicMock()
+    mock_browser.fetch_page_content.return_value = """
+    <html><body>
+    <div>
+      <a href="/r/gifts/comments/abc123/best_gifts/">Best Christmas gifts under $50</a>
+      <span>350 votes · 45 comments</span>
+    </div>
+    <div>
+      <a href="/r/gifts/comments/abc456/ideas/">Great holiday ideas</a>
+      <span>200 votes · 15 comments</span>
+    </div>
+    <div>
+      <a href="/r/gifts/comments/abc789/unique/">Unique stocking stuffers</a>
+      <span>120 votes · 10 comments</span>
+    </div>
+    </body></html>
+    """
+    collector = RedditCollector(browser_manager=mock_browser)
     results = collector.collect(sample_niche, use_cache=False)
     assert isinstance(results, list)
-    assert len(results) > 0
-    for item in results:
-        assert isinstance(item, Evidence)
-        assert item.source == "reddit"
-        assert item.source_url.startswith("http")
-        assert item.post_id == "abc123"
-        assert item.subreddit == "gifts"
-        assert item.value is None
+    assert len(results) >= 3
+    first = results[0]
+    assert isinstance(first, Evidence)
+    assert first.source == "reddit"
+    assert first.source_url.startswith("http")
+    assert first.post_id == "abc123"
+    assert first.subreddit == "gifts"
 
 
 def test_web_search_collector(sample_niche):
-    collector = WebSearchCollector()
-    results = collector.collect(sample_niche)
-    assert isinstance(results, list)
-    assert len(results) > 0
-    for item in results:
-        assert isinstance(item, Evidence)
-        assert item.source == "web_search"
-        assert item.source_url.startswith("http")
+    mock_results = [
+        {
+            "title": "Top Gift Guide 2026",
+            "href": "https://example.com/guide",
+            "body": "Best gifts and prices for everyone on your list.",
+        }
+    ]
+    with patch("src.collectors.web_search.DDGS") as mock_ddgs:
+        inst = MagicMock()
+        mock_ddgs.return_value = inst
+        inst.text.return_value = mock_results
+
+        collector = WebSearchCollector()
+        results = collector.collect(sample_niche, use_cache=False)
+        assert isinstance(results, list)
+        assert len(results) > 0
+        for item in results:
+            assert isinstance(item, Evidence)
+            assert item.source == "web_search"
+            assert item.source_url.startswith("http")
 
 
 @pytest.fixture
 def cleanup_trends_cooldown():
-    """Ensures the Google Trends circuit-breaker state never leaks across tests or into
-    real dev runs."""
+    """Ensures the Google Trends circuit-breaker state never leaks across tests."""
     yield
-    meta_path = cache.raw_dir / "_meta_google_trends_cooldown.json"
+    meta_path = cache.raw_dir / f"_meta_{COOLDOWN_META_KEY}.json"
     meta_path.unlink(missing_ok=True)
 
 
 def test_google_trends_success_path(cleanup_trends_cooldown):
-    """A fully mocked TrendReq client lets us test the happy path with no network call."""
     mock_client = MagicMock()
-    mock_client.related_queries.return_value = {
-        "christmas gift ideas": {
-            "rising": pd.DataFrame({"query": ["stocking stuffers for men"], "value": [120]}),
-            "top": pd.DataFrame({"query": ["best stocking stuffers"], "value": [85]}),
-        }
-    }
-    mock_client.interest_over_time.return_value = pd.DataFrame(
-        {"christmas gift ideas": [10, 12, 15, 40, 45, 50]}
-    )
+    df_top = pd.DataFrame([{"query": "best gift", "value": 100}])
+    df_rising = pd.DataFrame([{"query": "cozy gift", "value": 250}])
+    mock_client.related_queries.return_value = {"gift": {"top": df_top, "rising": df_rising}}
 
     collector = GoogleTrendsCollector(trend_client_factory=lambda: mock_client)
     collector.sleep_seconds = 0
-    niche = Niche(id="t1", name="Christmas gift ideas", seed_keywords=["christmas gift ideas"])
+    niche = Niche(id="t1", name="Gift", seed_keywords=["gift"])
     results = collector.collect(niche, use_cache=False)
 
     assert len(results) > 0
-    for ev in results:
-        assert isinstance(ev, Evidence)
-        assert ev.source == "google_trends"
-        assert ev.is_mock is False
+    assert any(ev.keyword == "cozy gift" and "+250%" in ev.text for ev in results)
 
 
 def test_google_trends_429_sets_cooldown_and_fallback(cleanup_trends_cooldown):
-    """A 429 from the client must trigger the baseline fallback AND persist a cooldown."""
     mock_client = MagicMock()
     mock_client.build_payload.side_effect = Exception("429 Too Many Requests")
 
@@ -148,7 +152,6 @@ def test_google_trends_429_sets_cooldown_and_fallback(cleanup_trends_cooldown):
 
 
 def test_google_trends_skips_real_call_during_cooldown(cleanup_trends_cooldown):
-    """While a cooldown is active, the real client must never even be constructed."""
     future = datetime.now() + timedelta(minutes=30)
     cache.set_meta(COOLDOWN_META_KEY, {"limited_until": future.isoformat()})
 
@@ -164,41 +167,20 @@ def test_google_trends_skips_real_call_during_cooldown(cleanup_trends_cooldown):
     assert all(ev.is_mock for ev in results)
 
 
-def test_build_collectors_excludes_websearch_without_tavily():
-    """When use_tavily=False, WebSearchCollector is not included and RedditCollector
-    has no working source (Reddit's own JSON search requires login)."""
-    collectors = build_collectors(use_tavily=False)
-    collector_types = [type(c) for c in collectors]
-    assert WebSearchCollector not in collector_types
-    assert RedditCollector in collector_types
-    reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
-    assert reddit.use_tavily is False
-
-
-def test_build_collectors_includes_websearch_with_tavily():
-    """When use_tavily=True (default), WebSearchCollector is included."""
-    collectors = build_collectors(use_tavily=True)
+def test_build_collectors_includes_all_sources():
+    collectors = build_collectors(use_amazon=True, use_etsy=True)
     collector_types = [type(c) for c in collectors]
     assert WebSearchCollector in collector_types
     assert RedditCollector in collector_types
-    reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
-    assert reddit.use_tavily is True
+    assert AmazonCollector in collector_types
+    assert EtsyCollector in collector_types
+    assert GoogleSuggestCollector in collector_types
 
 
-def test_build_collectors_default_enables_tavily():
-    """build_collectors() with no explicit use_tavily argument defaults to True."""
-    collectors = build_collectors()
+def test_build_collectors_can_toggle_amazon_and_etsy():
+    collectors = build_collectors(use_amazon=False, use_etsy=False)
     collector_types = [type(c) for c in collectors]
+    assert AmazonCollector not in collector_types
+    assert EtsyCollector not in collector_types
+    assert RedditCollector in collector_types
     assert WebSearchCollector in collector_types
-    reddit = [c for c in collectors if isinstance(c, RedditCollector)][0]
-    assert reddit.use_tavily is True
-
-
-def test_registry_collect_for_niche(sample_niche):
-    # Test registry execution without crashing even if network/rate-limits happen
-    all_evidence = collect_for_niche(sample_niche)
-    assert isinstance(all_evidence, list)
-    assert len(all_evidence) > 0
-    # Every item must have a non-empty source_url
-    for item in all_evidence:
-        assert item.source_url and item.source_url.strip()

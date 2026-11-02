@@ -75,8 +75,8 @@ def run(
     digest_model: Optional[str] = typer.Option(None, "--digest-model", help="Tên model digest"),
     trend_source: Optional[str] = typer.Option(None, "--trend-source", help="Nguồn dữ liệu Trend: google_trends | serpapi"),
     use_cache: bool = typer.Option(True, "--cache/--no-cache", help="Có sử dụng dữ liệu đã cache hay không"),
-    use_tavily: bool = typer.Option(True, "--tavily/--no-tavily", help="Dùng Tavily cho Reddit + Web Search. Reddit JSON công khai đã bị chặn (yêu cầu đăng nhập), nên tắt cờ này sẽ không có dữ liệu Reddit."),
-    use_amazon: Optional[bool] = typer.Option(None, "--amazon/--no-amazon", help="Cào Amazon search results (giá, rating, badge Best Seller). Mặc định theo config/settings.yaml."),
+    use_amazon: Optional[bool] = typer.Option(None, "--amazon/--no-amazon", help="Cào Amazon search results (giá, rating, badge Best Seller)."),
+    use_etsy: Optional[bool] = typer.Option(None, "--etsy/--no-etsy", help="Cào Etsy listing đối thủ và giá tham khảo."),
 ):
     """Executes the full AI trend research pipeline and outputs a Markdown report."""
     category, all_niches = load_niches()
@@ -91,7 +91,7 @@ def run(
     # Determine default provider
     w_provider = writer_provider or settings.llm.writer.provider
 
-    # Check API key availability — warn loudly, do NOT silently fall back to mock
+    # Check API key availability
     missing_key = False
     if w_provider == "gemini" and not settings.gemini_api_key:
         console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa được cấu hình trong .env[/bold red]")
@@ -111,11 +111,6 @@ def run(
         console.print("[yellow]   Hãy dán key lấy từ serpapi.com vào .env, hoặc dùng '--trend-source google_trends' để quay lại pytrends.[/yellow]")
         raise typer.Exit(1)
 
-    if use_tavily and not settings.tavily_api_key:
-        console.print("[bold red]❌ Lỗi: --tavily được bật nhưng TAVILY_API_KEY chưa được cấu hình trong .env[/bold red]")
-        console.print("[yellow]   Hãy dán key lấy từ tavily.com vào .env, hoặc bỏ cờ --tavily để chỉ dùng Reddit JSON công khai.[/yellow]")
-        raise typer.Exit(1)
-
     d_provider = digest_provider or (w_provider if w_provider == "mock" else settings.llm.digest.provider)
     if d_provider == "gemini" and not settings.gemini_api_key:
         console.print("[bold red]❌ Lỗi: GEMINI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
@@ -124,7 +119,6 @@ def run(
         console.print("[bold red]❌ Lỗi: OPENAI_API_KEY chưa cấu hình cho bước digest.[/bold red]")
         raise typer.Exit(1)
 
-    # When using mock, display a clear warning so the user knows output is not real data
     if w_provider == "mock":
         console.print("[bold yellow]⚠️  Chế độ MOCK — báo cáo sẽ chứa dữ liệu mẫu, không dùng để ra quyết định kinh doanh.[/bold yellow]\n")
 
@@ -137,16 +131,16 @@ def run(
         summary_model=writer_model,
         trend_provider=trend_provider,
         use_cache=use_cache,
-        use_tavily=use_tavily,
         use_amazon=use_amazon,
+        use_etsy=use_etsy,
     )
 
     console.print(f"\n[bold green]=== BẮT ĐẦU NGHIÊN CỨU XU HƯỚNG ===[/bold green]")
     console.print(f"Danh mục: [bold cyan]{category}[/bold cyan]")
     console.print(f"Số lượng Niche: [bold cyan]{len(selected_niches)}[/bold cyan]")
-    tavily_status = "BẬT" if use_tavily else "TẮT"
     amazon_status = "BẬT" if (settings.collectors.amazon.enabled if use_amazon is None else use_amazon) else "TẮT"
-    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Tavily: [bold]{tavily_status}[/bold] | Amazon: [bold]{amazon_status}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
+    etsy_status = "BẬT" if (settings.collectors.etsy.enabled if use_etsy is None else use_etsy) else "TẮT"
+    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Amazon: [bold]{amazon_status}[/bold] | Etsy: [bold]{etsy_status}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
 
     def progress_callback(stage: str, fraction: float, msg: str):
         pct = int(fraction * 100)
@@ -158,29 +152,17 @@ def run(
         progress_cb=progress_callback,
     )
 
-    console.print("\n" + "=" * 60)
-    console.print(f"[bold green]✓ BÁO CÁO ĐÃ XUẤT THÀNH CÔNG![/bold green]")
-    console.print(f"📁 Đường dẫn: [bold cyan]{saved_path}[/bold cyan]")
-    console.print(f"💰 Ước tính chi phí: [bold yellow]${final_report.cost_usd:.4f}[/bold yellow] ({final_report.total_input_tokens} in / {final_report.total_output_tokens} out tokens)")
-
-    # Print rankings table
-    rank_table = Table(title="Xếp hạng Niche Tiềm Năng", show_header=True)
-    rank_table.add_column("Hạng", justify="center")
-    rank_table.add_column("Niche")
-    rank_table.add_column("Điểm", justify="center")
-    rank_table.add_column("Lý do")
-
-    for r in final_report.ranking:
-        rank_table.add_row(str(r.rank), r.niche, f"{r.score}/10", r.reason)
-
-    console.print(rank_table)
+    console.print(f"\n[bold green]✓ Báo cáo hoàn tất![/bold green] Đã lưu tại: [cyan]{saved_path}[/cyan]\n")
+    console.print(f"Tổng Input Tokens: [yellow]{final_report.total_input_tokens:,}[/yellow]")
+    console.print(f"Tổng Output Tokens: [yellow]{final_report.total_output_tokens:,}[/yellow]")
+    console.print(f"Chi phí ước tính: [bold green]${final_report.cost_usd:.4f}[/bold green] (~ {final_report.cost_usd * 25400:.1f} VNĐ)")
 
 
 @app.command("clear-cache")
 def clear_cache():
-    """Clears all cached raw data and evidence files."""
+    """Clears all raw data and digested evidence cache."""
     cache.clear()
-    console.print("[bold green]✓ Đã xóa toàn bộ cache tại data/raw và data/evidence.[/bold green]")
+    console.print("[bold green]✓ Đã xóa toàn bộ bộ nhớ đệm (cache)![/bold green]")
 
 
 if __name__ == "__main__":

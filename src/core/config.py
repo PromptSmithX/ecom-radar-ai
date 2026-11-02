@@ -43,53 +43,9 @@ class SerpApiConfig(BaseModel):
 
 
 class RedditConfig(BaseModel):
-    # Reddit is sourced through Tavily: the public JSON endpoint now returns 403
-    # because Reddit forces login for anonymous search.
-    use_tavily: bool = True
-    time_range: str = "year"
-    search_depth: str = "basic"  # basic (1 credit) | advanced (2 credits)
-
-    # Credit budget: max_seeds x max_intents x max_queries_per_intent = queries per niche.
-    # Defaults give exactly 2 Tavily queries (= 2 credits) per niche: pain + regret.
-    max_seeds: int = 1
-    max_intents: int = 2
-    max_queries_per_intent: int = 1
-    # Tavily bills per search, not per result, so a larger page size is free.
-    max_results_per_query: int = 10
-
-    # Drop results whose Tavily relevance score (semantic similarity of the crawled
-    # page to the query, 0-1) falls below this floor. Records with no score are kept
-    # so a missing field never silently discards data.
-    min_relevance: float = 0.2
-
+    max_results_per_query: int = 8
     preferred_subreddits: List[str] = Field(
-        default_factory=lambda: ["gifts", "GiftIdeas", "BuyItForLife", "AskMen", "AskWomen", "Etsy"]
-    )
-    # Order matters: with max_intents=2 only the first 2 intents run. "pain" and
-    # "regret" lead because they surface the signals that matter most for product
-    # risk — what's frustrating buyers right now, and what they regret buying —
-    # ahead of "ask"/"recommend" which are lower-value for that decision.
-    intents: Dict[str, List[str]] = Field(
-        default_factory=lambda: {
-            "pain": [
-                "{seed} hard to choose",
-                "{seed} who has everything",
-            ],
-            "regret": [
-                # Product-anchored phrasing keeps Tavily on-topic; the bare
-                # "{seed} waste of money" phrase matched unrelated subreddits.
-                "regret buying {seed}",
-                "{seed} waste of money",
-            ],
-            "ask": [
-                "looking for {seed}",
-                "what should I get {seed}",
-            ],
-            "recommend": [
-                "best {seed} worth it",
-                "{seed} actually use",
-            ],
-        }
+        default_factory=lambda: ["gifts", "GiftIdeas", "BuyItForLife", "AskMen", "AskWomen"]
     )
 
 
@@ -98,20 +54,21 @@ class WebSearchConfig(BaseModel):
 
 
 class AmazonConfig(BaseModel):
-    # Disabled by default: scraping amazon.com risks 503/CAPTCHA blocks on the host IP.
-    enabled: bool = False
+    enabled: bool = True
     max_results: int = 8
     sleep_seconds: float = 1.5
     cooldown_minutes: int = 30
     region_domain: str = "www.amazon.com"
 
 
+class EtsyConfig(BaseModel):
+    enabled: bool = True
+    max_results: int = 8
+
+
 class GoogleSuggestConfig(BaseModel):
     client: str = "firefox"
     hl: str = "en"
-    # Tried in order; the first provider that answers wins. Google rate-limits (429)
-    # an IP after repeated runs, so DuckDuckGo and Bing act as drop-in backups —
-    # all three return the same ["query", [suggestions...]] shape.
     providers: List[str] = Field(default_factory=lambda: ["google", "duckduckgo", "bing"])
     request_delay: float = 1.0
     max_suggestions: int = 6
@@ -125,18 +82,17 @@ class CollectorsConfig(BaseModel):
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     google_suggest: GoogleSuggestConfig = Field(default_factory=GoogleSuggestConfig)
     amazon: AmazonConfig = Field(default_factory=AmazonConfig)
+    etsy: EtsyConfig = Field(default_factory=EtsyConfig)
 
 
 class DigestConfig(BaseModel):
-    max_items: int = 25  # cap for the programmatic (no-LLM) digest
-    max_items_llm: int = 35  # cap for what gets fed into the LLM digest prompt
-    # Evidence is picked round-robin across sources in this order, so a source that
-    # returns many cheap items (google_suggest) can't crowd out the expensive,
-    # hard-to-get ones (reddit) by simply arriving first.
+    max_items: int = 25
+    max_items_llm: int = 35
     source_priority: List[str] = Field(
         default_factory=lambda: [
             "reddit",
             "amazon",
+            "etsy",
             "serpapi_trends",
             "google_trends",
             "web_search",
@@ -167,7 +123,6 @@ class Settings(BaseSettings):
     # Environment variables
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
-    tavily_api_key: Optional[str] = Field(default=None, alias="TAVILY_API_KEY")
     serpapi_api_key: Optional[str] = Field(default=None, alias="SERPAPI_API_KEY")
     reddit_user_agent: str = Field(default="trend-research/0.1 (by ecomm-researcher)", alias="REDDIT_USER_AGENT")
 

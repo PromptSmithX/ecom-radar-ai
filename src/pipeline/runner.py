@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 from src.collectors.registry import build_collectors, collect_for_niche
+from src.core.browser import BrowserManager
 from src.core.config import load_niches, settings
 from src.core.models import FinalReport, Niche, NicheReport
 from src.llm.cost import calculate_cost
@@ -34,8 +35,8 @@ class PipelineRunner:
         trend_provider: Optional[str] = None,
         api_key_serpapi: Optional[str] = None,
         use_cache: bool = True,
-        use_tavily: bool = True,
         use_amazon: Optional[bool] = None,
+        use_etsy: Optional[bool] = None,
     ):
         self.digest_provider = digest_provider or settings.llm.digest.provider
         self.digest_model = digest_model or settings.llm.digest.model
@@ -49,8 +50,8 @@ class PipelineRunner:
         self.trend_provider = trend_provider or settings.collectors.trend_provider
         self.api_key_serpapi = api_key_serpapi or settings.serpapi_api_key
         self.use_cache = use_cache
-        self.use_tavily = use_tavily
         self.use_amazon = use_amazon
+        self.use_etsy = use_etsy
 
     def _resolve_llm(self, provider: str, model: str):
         key = self.api_key_gemini if provider == "gemini" else self.api_key_openai
@@ -89,68 +90,72 @@ class PipelineRunner:
         niche_reports: List[NicheReport] = []
         niche_count = len(niches_to_run)
 
-        # Process each niche
-        for idx, niche in enumerate(niches_to_run):
-            base_fraction = idx / (niche_count + 1)
-            step_span = 1.0 / (niche_count + 1)
+        try:
+            # Process each niche
+            for idx, niche in enumerate(niches_to_run):
+                base_fraction = idx / (niche_count + 1)
+                step_span = 1.0 / (niche_count + 1)
 
-            # Step 1: Collect
-            notify("COLLECT", base_fraction + (step_span * 0.1), f"[{idx+1}/{niche_count}] Đang thu thập dữ liệu thô: {niche.name}...")
-            raw_evidence = collect_for_niche(
-                niche,
-                collectors=build_collectors(
-                    self.trend_provider,
-                    self.api_key_serpapi,
-                    use_tavily=self.use_tavily,
-                    use_amazon=self.use_amazon,
-                ),
-                use_cache=self.use_cache,
+                # Step 1: Collect
+                notify("COLLECT", base_fraction + (step_span * 0.1), f"[{idx+1}/{niche_count}] Đang thu thập dữ liệu thô: {niche.name}...")
+                raw_evidence = collect_for_niche(
+                    niche,
+                    collectors=build_collectors(
+                        self.trend_provider,
+                        self.api_key_serpapi,
+                        use_amazon=self.use_amazon,
+                        use_etsy=self.use_etsy,
+                    ),
+                    use_cache=self.use_cache,
+                )
+
+                # Step 2: Digest
+                notify("DIGEST", base_fraction + (step_span * 0.4), f"[{idx+1}/{niche_count}] Đang chuẩn hóa Evidence Pack: {niche.name}...")
+                evidence_pack, digest_usage = digest_step(niche, raw_evidence, digest_llm, use_cache=self.use_cache)
+                total_input_tokens += digest_usage.input_tokens
+                total_output_tokens += digest_usage.output_tokens
+                total_cost_usd += calculate_cost(self.digest_model, digest_usage.input_tokens, digest_usage.output_tokens)
+
+                # Step 3: Write Niche Report
+                notify("WRITE", base_fraction + (step_span * 0.8), f"[{idx+1}/{niche_count}] Đang viết báo cáo niche: {niche.name}...")
+                n_report, write_usage = write_niche_report(niche, evidence_pack, writer_llm)
+                total_input_tokens += write_usage.input_tokens
+                total_output_tokens += write_usage.output_tokens
+                total_cost_usd += calculate_cost(self.writer_model, write_usage.input_tokens, write_usage.output_tokens)
+
+                niche_reports.append(n_report)
+
+            # Step 4: Summarize & Rank
+            notify("SUMMARIZE", 0.90, "Đang xếp hạng niche và tuyển chọn top 3 sản phẩm...")
+            ranking, top_ideas, sum_usage = summarize_report(niche_reports, summary_llm)
+            total_input_tokens += sum_usage.input_tokens
+            total_output_tokens += sum_usage.output_tokens
+            total_cost_usd += calculate_cost(self.summary_model, sum_usage.input_tokens, sum_usage.output_tokens)
+
+            # Step 5: Render
+            notify("RENDER", 0.96, "Đang kết xuất báo cáo Markdown...")
+            final_report = FinalReport(
+                category=active_category,
+                date=datetime.now().strftime("%d/%m/%Y"),
+                niche_reports=niche_reports,
+                ranking=ranking,
+                top_ideas=top_ideas,
+                cost_usd=round(total_cost_usd, 4),
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                models_used={
+                    "digest": f"{self.digest_provider}/{self.digest_model}",
+                    "writer": f"{self.writer_provider}/{self.writer_model}",
+                    "summary": f"{self.summary_provider}/{self.summary_model}",
+                },
             )
 
-            # Step 2: Digest
-            notify("DIGEST", base_fraction + (step_span * 0.4), f"[{idx+1}/{niche_count}] Đang chuẩn hóa Evidence Pack: {niche.name}...")
-            evidence_pack, digest_usage = digest_step(niche, raw_evidence, digest_llm, use_cache=self.use_cache)
-            total_input_tokens += digest_usage.input_tokens
-            total_output_tokens += digest_usage.output_tokens
-            total_cost_usd += calculate_cost(self.digest_model, digest_usage.input_tokens, digest_usage.output_tokens)
+            renderer = ReportRenderer()
+            saved_path = renderer.save(final_report)
+            rendered_md = renderer.render(final_report)
 
-            # Step 3: Write Niche Report
-            notify("WRITE", base_fraction + (step_span * 0.8), f"[{idx+1}/{niche_count}] Đang viết báo cáo niche: {niche.name}...")
-            n_report, write_usage = write_niche_report(niche, evidence_pack, writer_llm)
-            total_input_tokens += write_usage.input_tokens
-            total_output_tokens += write_usage.output_tokens
-            total_cost_usd += calculate_cost(self.writer_model, write_usage.input_tokens, write_usage.output_tokens)
+            notify("DONE", 1.0, f"Báo cáo hoàn tất! Đã lưu tại: {saved_path.name}")
+            return final_report, saved_path, rendered_md
 
-            niche_reports.append(n_report)
-
-        # Step 4: Summarize & Rank
-        notify("SUMMARIZE", 0.90, "Đang xếp hạng niche và tuyển chọn top 3 sản phẩm...")
-        ranking, top_ideas, sum_usage = summarize_report(niche_reports, summary_llm)
-        total_input_tokens += sum_usage.input_tokens
-        total_output_tokens += sum_usage.output_tokens
-        total_cost_usd += calculate_cost(self.summary_model, sum_usage.input_tokens, sum_usage.output_tokens)
-
-        # Step 5: Render
-        notify("RENDER", 0.96, "Đang kết xuất báo cáo Markdown...")
-        final_report = FinalReport(
-            category=active_category,
-            date=datetime.now().strftime("%d/%m/%Y"),
-            niche_reports=niche_reports,
-            ranking=ranking,
-            top_ideas=top_ideas,
-            cost_usd=round(total_cost_usd, 4),
-            total_input_tokens=total_input_tokens,
-            total_output_tokens=total_output_tokens,
-            models_used={
-                "digest": f"{self.digest_provider}/{self.digest_model}",
-                "writer": f"{self.writer_provider}/{self.writer_model}",
-                "summary": f"{self.summary_provider}/{self.summary_model}",
-            },
-        )
-
-        renderer = ReportRenderer()
-        saved_path = renderer.save(final_report)
-        rendered_md = renderer.render(final_report)
-
-        notify("DONE", 1.0, f"Báo cáo hoàn tất! Đã lưu tại: {saved_path.name}")
-        return final_report, saved_path, rendered_md
+        finally:
+            BrowserManager.close_all()

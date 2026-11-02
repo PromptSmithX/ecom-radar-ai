@@ -1,22 +1,19 @@
-"""Amazon search-results collector.
+"""Amazon product and keyword collector using Playwright Stealth and Completion API.
 
-Scrapes amazon.com/s?k=<seed> for product cards (title, price, rating, review
-count, Best Seller/Amazon's Choice badge). No API key required, but the host IP
-can be blocked (503/CAPTCHA), so this uses the same circuit-breaker pattern as
-GoogleTrendsCollector: a 429/503/CAPTCHA response sets a cooldown and subsequent
-calls are skipped until it expires. On failure this returns [] — it never
-fabricates product data, to preserve the project's anti-hallucination guarantee.
+Collects authentic product prices, ratings, review counts, and Best Seller badges
+from amazon.com search results, plus buyer search keyword suggestions via Amazon's
+public completion API. 100% Free, no API keys or proxies required.
 """
 
 from __future__ import annotations
 import logging
 import re
-import time
 import urllib.parse
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import httpx
 from bs4 import BeautifulSoup
+from src.core.browser import BrowserManager
 from src.core.cache import cache
 from src.core.config import settings
 from src.core.models import Evidence, Niche
@@ -24,181 +21,205 @@ from .base import Collector
 
 logger = logging.getLogger(__name__)
 
+AMAZON_SUGGEST_URL = "https://completion.amazon.com/api/2017/suggestions"
 COOLDOWN_META_KEY = "amazon_cooldown"
-
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-CAPTCHA_MARKERS = (
-    "captcha",
-    "robot check",
-    "api-services-support@amazon.com",
-    "bm-verify",  # Akamai Bot Manager challenge/redirect page served with HTTP 200
-)
+CAPTCHA_MARKERS = ("captcha", "robot check", "api-services-support@amazon.com", "bm-verify")
 
 
 class AmazonCollector(Collector):
     name: str = "amazon"
 
-    def __init__(self, client_factory: Optional[Callable[[], httpx.Client]] = None):
-        cfg = settings.collectors.amazon
-        self.enabled = cfg.enabled
-        self.max_results = cfg.max_results
-        self.sleep_seconds = cfg.sleep_seconds
-        self.cooldown_minutes = cfg.cooldown_minutes
-        self.region_domain = cfg.region_domain
-        self._client_factory = client_factory or (
-            lambda: httpx.Client(timeout=15.0, headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"})
-        )
+    def __init__(
+        self,
+        browser_manager: Optional[BrowserManager] = None,
+        client_factory: Optional[Callable[[], httpx.Client]] = None,
+    ):
+        cfg = getattr(settings.collectors, "amazon", None)
+        self.enabled = getattr(cfg, "enabled", True) if cfg else True
+        self.max_results = getattr(cfg, "max_results", 8) if cfg else 8
+        self.sleep_seconds = getattr(cfg, "sleep_seconds", 1.5) if cfg else 1.5
+        self.cooldown_minutes = getattr(cfg, "cooldown_minutes", 30) if cfg else 30
+        self.region_domain = getattr(cfg, "region_domain", "www.amazon.com") if cfg else "www.amazon.com"
+        self.browser_manager = browser_manager or BrowserManager.get_instance()
+        self._client_factory = client_factory
 
-    def _search_url(self, seed: str) -> str:
-        return f"https://{self.region_domain}/s?k={urllib.parse.quote_plus(seed)}"
+    def _fetch_amazon_suggestions(self, seed: str) -> List[Evidence]:
+        """Fetches buyer autocomplete queries from Amazon Completion API ($0, no CAPTCHA)."""
+        evidence_items: List[Evidence] = []
+        try:
+            params = {
+                "mid": "ATVPDKIKX0DER",  # Amazon US
+                "alias": "aps",
+                "prefix": seed,
+            }
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            with httpx.Client(timeout=8.0) as client:
+                resp = client.get(AMAZON_SUGGEST_URL, params=params, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    suggestions = data.get("suggestions", [])
+                    for s in suggestions[:4]:
+                        val = s.get("value")
+                        if val and val.lower() != seed.lower():
+                            encoded = urllib.parse.quote_plus(val)
+                            evidence_items.append(
+                                Evidence(
+                                    source=self.name,
+                                    kind="keyword_signal",
+                                    keyword=val,
+                                    text=f"Từ khóa tìm kiếm mua sắm phổ biến trên Amazon: '{val}'.",
+                                    value="Amazon Search Autocomplete",
+                                    source_url=f"https://{self.region_domain}/s?k={encoded}",
+                                )
+                            )
+        except Exception as e:
+            logger.debug(f"Amazon suggestion fetch error for '{seed}': {e}")
+        return evidence_items
 
-    def _is_blocked(self, status_code: int, body: str) -> bool:
-        if status_code in (429, 503):
-            return True
-        lowered = body.lower()
-        return any(marker in lowered for marker in CAPTCHA_MARKERS)
-
-    def _parse_price(self, card) -> Optional[str]:
-        price_el = card.select_one(".a-price .a-offscreen")
-        if price_el and price_el.text.strip():
-            return price_el.text.strip()
-        return None
-
-    def _parse_rating(self, card) -> Optional[str]:
-        rating_el = card.select_one(".a-icon-alt")
-        if rating_el and rating_el.text.strip():
-            match = re.search(r"[\d.]+", rating_el.text)
-            return match.group(0) if match else None
-        return None
-
-    def _parse_review_count(self, card) -> Optional[str]:
-        for el in card.select("span.a-size-base, span[aria-label]"):
-            text = el.get("aria-label") or el.text
-            if text and re.fullmatch(r"[\d,]+", text.strip()):
-                return text.strip()
-        return None
-
-    def _has_badge(self, card) -> bool:
-        badge_text = card.get_text(" ", strip=True).lower()
-        return "best seller" in badge_text or "amazon's choice" in badge_text
-
-    def _parse_cards(self, html: str, seed: str) -> List[Evidence]:
-        soup = BeautifulSoup(html, "lxml")
-        cards = soup.select('div[data-component-type="s-search-result"]')
-        evidence_list: List[Evidence] = []
+    def _parse_html_cards(self, html: str, seed: str) -> List[Evidence]:
+        """Parses product cards from HTML content."""
+        evidence_items: List[Evidence] = []
+        soup = BeautifulSoup(html, "html.parser")
+        cards = soup.find_all("div", attrs={"data-component-type": "s-search-result"})
 
         for card in cards[: self.max_results]:
-            # Amazon's markup has shifted the product link out of <h2> into a sibling
-            # <a>; matching on href containing "/dp/" (the product detail path) is
-            # resilient to further layout churn than a fixed "h2 a" selector.
-            link_el = card.select_one('a[href*="/dp/"]')
-            title_el = card.select_one("h2 span") or (link_el.select_one("span") if link_el else None)
-            if link_el is None or not link_el.get("href") or title_el is None:
-                continue
+            asin = card.get("data-asin", "").strip()
 
-            title = title_el.text.strip()
+            # Title & link
+            link_el = card.find("a", href=re.compile(r"/dp/"))
+            title_el = card.find("h2")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
             if not title:
                 continue
 
-            href = link_el["href"]
-            product_url = href if href.startswith("http") else f"https://{self.region_domain}{href}"
-
-            price = self._parse_price(card)
-            rating = self._parse_rating(card)
-            review_count = self._parse_review_count(card)
-            has_badge = self._has_badge(card)
-
-            parts = [title]
-            if price:
-                parts.append(price)
-            if rating and review_count:
-                parts.append(f"{rating}★, {review_count} reviews")
-            elif rating:
-                parts.append(f"{rating}★")
-            if has_badge:
-                parts.append("[Best Seller/Amazon's Choice]")
-            text = " — ".join(parts)
-
-            ev = Evidence(
-                source=self.name,
-                kind="price" if price else "competitor",
-                keyword=seed,
-                text=text,
-                value=price,
-                title=title,
-                source_url=product_url,
+            product_url = f"https://{self.region_domain}/dp/{asin}" if asin else (
+                f"https://{self.region_domain}{link_el['href']}" if link_el and link_el.get("href", "").startswith("/") else (
+                    link_el["href"] if link_el and link_el.get("href", "").startswith("http") else f"https://{self.region_domain}/s?k={urllib.parse.quote_plus(seed)}"
+                )
             )
-            evidence_list.append(ev)
 
-        return evidence_list
+            # Price
+            price_el = card.find("span", class_="a-offscreen")
+            price_text = price_el.get_text(strip=True) if price_el else None
+            if not price_text:
+                whole = card.find("span", class_="a-price-whole")
+                frac = card.find("span", class_="a-price-fraction")
+                if whole:
+                    price_text = f"${whole.get_text(strip=True)}.{frac.get_text(strip=True) if frac else '00'}"
 
-    def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
-        # 1. Cache first
-        if use_cache:
-            cached_data = cache.get_raw(self.name, niche.name)
-            if cached_data is not None:
-                logger.info(f"Loaded Amazon data from cache for niche: {niche.name}")
-                return [Evidence(**item) for item in cached_data]
+            # Rating & reviews count
+            rating_el = card.find("span", class_="a-icon-alt")
+            rating_text = rating_el.get_text(strip=True) if rating_el else None
 
-        # 2. Feature flag off: return empty without touching the network
-        if not self.enabled:
-            logger.info(f"AmazonCollector disabled by config; skipping '{niche.name}'.")
+            review_el = card.find("span", class_="a-size-base")
+            review_count = review_el.get_text(strip=True) if review_el and re.match(r"^[\d,]+$", review_el.get_text(strip=True)) else None
+
+            # Badges
+            card_text_lower = card.get_text(" ", strip=True).lower()
+            badge = None
+            if "best seller" in card_text_lower:
+                badge = "Best Seller"
+            elif "amazon's choice" in card_text_lower:
+                badge = "Amazon's Choice"
+
+            # Build evidence text
+            parts = [f"Sản phẩm Amazon: '{title}'"]
+            if price_text:
+                parts.append(f"Giá: {price_text}")
+            if rating_text:
+                parts.append(f"Đánh giá: {rating_text}")
+            if review_count:
+                parts.append(f"({review_count} lượt review)")
+            if badge:
+                parts.append(f"[{badge}]")
+
+            full_text = " — ".join(parts)
+
+            evidence_items.append(
+                Evidence(
+                    source=self.name,
+                    kind="price" if price_text else "competitor",
+                    keyword=seed,
+                    text=full_text,
+                    value=price_text if price_text else None,
+                    source_url=product_url,
+                    title=title,
+                )
+            )
+
+        return evidence_items
+
+    def _scrape_amazon_search(self, seed: str) -> List[Evidence]:
+        """Scrapes product listing cards using client_factory if provided, otherwise BrowserManager."""
+        url = f"https://{self.region_domain}/s?k={urllib.parse.quote_plus(seed)}"
+
+        # If a fake client factory is injected (e.g. during unit tests), use it
+        if self._client_factory is not None:
+            try:
+                with self._client_factory() as client:
+                    resp = client.get(url)
+                    if resp.status_code in (429, 503) or any(m in resp.text.lower() for m in CAPTCHA_MARKERS):
+                        limited_until = datetime.now() + timedelta(minutes=self.cooldown_minutes)
+                        cache.set_meta(COOLDOWN_META_KEY, {"limited_until": limited_until.isoformat()})
+                        return []
+                    return self._parse_html_cards(resp.text, seed)
+            except Exception as e:
+                logger.warning(f"Client factory request failed: {e}")
+                return []
+
+        try:
+            html = self.browser_manager.fetch_page_content(
+                url,
+                wait_selector='div[data-component-type="s-search-result"]',
+                delay_seconds=2.0,
+            )
+            return self._parse_html_cards(html, seed)
+        except Exception as e:
+            logger.warning(f"Error scraping Amazon search for '{seed}': {e}")
             return []
 
-        # 3. Circuit breaker: skip real calls while a previous block is on cooldown
+    def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
+        if not self.enabled:
+            return []
+
+        # Check cooldown
         cooldown_meta = cache.get_meta(COOLDOWN_META_KEY)
         if cooldown_meta and cooldown_meta.get("limited_until"):
             try:
                 limited_until = datetime.fromisoformat(cooldown_meta["limited_until"])
                 if datetime.now() < limited_until:
-                    logger.warning(
-                        f"Amazon đang trong cooldown do bị chặn trước đó (hết lúc {limited_until.isoformat()}). "
-                        f"Bỏ qua gọi thật cho '{niche.name}'."
-                    )
+                    logger.warning(f"Amazon is currently in cooldown until {limited_until}. Skipping.")
                     return []
-            except (ValueError, TypeError):
+            except Exception:
                 pass
 
-        kw_list = niche.seed_keywords if niche.seed_keywords else [niche.name]
+        if use_cache:
+            cached_data = cache.get_raw(self.name, niche.name)
+            if cached_data is not None:
+                logger.info(f"Loaded Amazon evidence from cache for niche: {niche.name}")
+                return [Evidence(**item) for item in cached_data]
+
+        seeds = niche.seed_keywords if niche.seed_keywords else [niche.name]
         evidence_list: List[Evidence] = []
-        raw_results = []
-        blocked = False
+        seen_urls = set()
 
-        try:
-            client = self._client_factory()
-        except Exception as e:
-            logger.warning(f"Could not initialize Amazon HTTP client: {e}")
-            return []
+        for seed in seeds[:2]:
+            # 1. Autocomplete keywords (only in live mode without custom client_factory)
+            if self._client_factory is None:
+                sug_items = self._fetch_amazon_suggestions(seed)
+                for item in sug_items:
+                    if item.source_url not in seen_urls:
+                        seen_urls.add(item.source_url)
+                        evidence_list.append(item)
 
-        with client:
-            for kw in kw_list:
-                if blocked:
-                    break
-                try:
-                    resp = client.get(self._search_url(kw))
-                except Exception as e:
-                    logger.warning(f"Amazon search for '{kw}' failed: {e}")
-                    continue
+            # 2. Product search results
+            prod_items = self._scrape_amazon_search(seed)
+            for item in prod_items:
+                if item.source_url not in seen_urls:
+                    seen_urls.add(item.source_url)
+                    evidence_list.append(item)
 
-                if self._is_blocked(resp.status_code, resp.text):
-                    logger.warning("Amazon returned a block/CAPTCHA response. Setting cooldown and stopping.")
-                    blocked = True
-                    limited_until = datetime.now() + timedelta(minutes=self.cooldown_minutes)
-                    cache.set_meta(COOLDOWN_META_KEY, {"limited_until": limited_until.isoformat()})
-                    break
-
-                if resp.status_code != 200:
-                    logger.warning(f"Amazon search for '{kw}' returned status {resp.status_code}.")
-                    continue
-
-                items = self._parse_cards(resp.text, kw)
-                evidence_list.extend(items)
-                raw_results.extend(ev.model_dump() for ev in items)
-
-                time.sleep(self.sleep_seconds)
-
-        if raw_results:
-            cache.set_raw(self.name, niche.name, raw_results)
-
+        cache.set_raw(self.name, niche.name, [e.model_dump() for e in evidence_list])
         return evidence_list
