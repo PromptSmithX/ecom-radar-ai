@@ -41,6 +41,7 @@ htmlcov/
 # Generated runtime data (cache, evidence packs, reports) - khong phai source code
 data/raw/*.json
 data/evidence/*.json
+data/.browser_profile/
 reports/*.md
 !data/raw/.gitkeep
 !data/evidence/.gitkeep

@@ -25,33 +25,20 @@ collectors:
     cooldown_minutes: 60
     include_interest_over_time: false
   reddit:
-    use_tavily: true
-    time_range: "year"
-    search_depth: "basic"
-    max_seeds: 1
-    max_intents: 2
-    max_queries_per_intent: 1
-    max_results_per_query: 10
+    max_results_per_query: 8
     preferred_subreddits:
       - "gifts"
       - "GiftIdeas"
       - "BuyItForLife"
       - "AskMen"
       - "AskWomen"
-      - "Etsy"
-    intents:
-      pain:
-        - "{seed} hard to choose"
-        - "{seed} who has everything"
-      regret:
-        - "{seed} waste of money"
-        - "regret buying {seed}"
-      ask:
-        - "looking for {seed}"
-        - "what should I get {seed}"
-      recommend:
-        - "best {seed} worth it"
-        - "{seed} actually use"
+  amazon:
+    enabled: true
+    max_results: 8
+    region_domain: "www.amazon.com"
+  etsy:
+    enabled: true
+    max_results: 8
   web_search:
     max_results: 5
   google_suggest:
@@ -69,6 +56,8 @@ digest:
   max_items_llm: 35
   source_priority:
     - "reddit"
+    - "amazon"
+    - "etsy"
     - "serpapi_trends"
     - "google_trends"
     - "web_search"

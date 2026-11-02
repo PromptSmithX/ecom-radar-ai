@@ -1,8 +1,13 @@
-"""Web Search collector using Tavily API."""
+"""Web Search collector using DuckDuckGo Search (ddgs).
+
+Collects market price guides, best sellers, and competitor benchmarks from the web.
+100% Free, no API keys or accounts required.
+"""
 
 from __future__ import annotations
 import logging
 from typing import List
+from ddgs import DDGS
 from src.core.cache import cache
 from src.core.config import settings
 from src.core.models import Evidence, Niche
@@ -15,51 +20,46 @@ class WebSearchCollector(Collector):
     name: str = "web_search"
 
     def __init__(self):
-        self.max_results = settings.collectors.web_search.max_results
-        self.api_key = settings.tavily_api_key
+        cfg = getattr(settings.collectors, "web_search", None)
+        self.max_results: int = getattr(cfg, "max_results", 5) if cfg else 5
 
     def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
-        evidence_list: List[Evidence] = []
-
-        # 1. Check cache first if enabled
         if use_cache:
             cached_data = cache.get_raw(self.name, niche.name)
             if cached_data is not None:
                 return [Evidence(**item) for item in cached_data]
 
+        evidence_list: List[Evidence] = []
         raw_results = []
-
-        # 2. Try Tavily API if key is present
-        if not self.api_key or not self.api_key.strip():
-            logger.warning(f"Tavily API key missing — no web search data collected for '{niche.name}'.")
-            return []
+        query = f"{niche.name} best sellers price guide market 2026"
 
         try:
-            from tavily import TavilyClient
-            tavily_client = TavilyClient(api_key=self.api_key)
-            query = f"{niche.name} best sellers price guide competition 2026"
-            response = tavily_client.search(query=query, max_results=self.max_results)
-            results = response.get("results", [])
+            results = list(DDGS(timeout=10).text(query, max_results=self.max_results))
             for r in results:
                 title = r.get("title", "")
-                url = r.get("url", "")
-                content = r.get("content", "")
+                url = r.get("href", "")
+                body = r.get("body", "")
                 if not url:
                     continue
+
+                is_price = any(w in body.lower() or w in title.lower() for w in ["$", "price", "cost", "giá", "under $"])
                 ev = Evidence(
                     source=self.name,
-                    kind="price" if any(w in content.lower() for w in ["$", "price", "cost", "giá"]) else "competitor",
+                    kind="price" if is_price else "competitor",
                     keyword=niche.name,
-                    text=f"{title}: {content[:200]}...",
-                    value="Web Search Result",
+                    text=f"{title}: {body[:250]}",
+                    value="Khảo sát thị trường web",
                     source_url=url,
+                    title=title,
+                    snippet=body[:300],
                 )
                 evidence_list.append(ev)
                 raw_results.append(ev.model_dump())
         except Exception as e:
-            logger.warning(f"Tavily search failed for '{niche.name}': {e}. No web search data collected.")
+            logger.warning(f"DuckDuckGo web search failed for '{niche.name}': {e}.")
 
         if raw_results:
             cache.set_raw(self.name, niche.name, raw_results)
 
+        logger.info(f"WebSearchCollector collected {len(evidence_list)} items for '{niche.name}'.")
         return evidence_list

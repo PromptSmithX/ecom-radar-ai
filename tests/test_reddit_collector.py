@@ -1,13 +1,15 @@
-"""Unit tests for the Reddit collector (Tavily-backed) without making live network calls.
-
-Reddit's own public search now requires login (old.reddit.com/search.json redirects to
-/login), so Tavily is the only working source. These tests mock tavily.TavilyClient.
-"""
+"""Unit tests for the new Reddit collector without Tavily dependency."""
 
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
-from src.collectors.reddit import REDDIT_THREAD_PATTERN, RedditCollector
+from src.collectors.reddit import (
+    COMMENT_PATTERN,
+    REDDIT_THREAD_PATTERN,
+    VOTE_PATTERN,
+    RedditCollector,
+    _parse_count_str,
+)
 from src.core.cache import cache
 from src.core.models import Evidence, Niche
 
@@ -47,315 +49,69 @@ def test_reddit_url_regex_filtering():
         assert match is None, f"Expected invalid URL: {u}"
 
 
-def test_use_tavily_false_returns_empty(sample_niche):
-    """When use_tavily=False, no Reddit source is available: must return empty without
-    ever touching TavilyClient."""
-    with patch("tavily.TavilyClient") as mock_tavily_cls:
-        collector = RedditCollector(api_key="tvly-mock-key", use_tavily=False)
-        results = collector.collect(sample_niche, use_cache=False)
-        assert results == []
-        mock_tavily_cls.assert_not_called()
+def test_parse_count_str():
+    """Tests parsing score and comment count numbers."""
+    assert _parse_count_str("761") == 761
+    assert _parse_count_str("49") == 49
+    assert _parse_count_str("1.2k") == 1200
+    assert _parse_count_str("25k") == 25000
+    assert _parse_count_str("") is None
+    assert _parse_count_str("none") is None
 
 
-def test_missing_api_key_returns_empty(sample_niche):
-    """When TAVILY_API_KEY is missing, collector must return empty list without crashing or falling back to fake data."""
-    collector = RedditCollector(api_key="", use_tavily=True)
-    results = collector.collect(sample_niche, use_cache=False)
-    assert results == []
-    assert isinstance(results, list)
+def test_vote_and_comment_regex():
+    """Validates regex detection of votes and comments text."""
+    vm = VOTE_PATTERN.search("761 votes · 49 comments")
+    assert vm is not None
+    assert "761" in vm.group(0)
 
-    with patch("src.collectors.reddit.settings.tavily_api_key", ""):
-        collector_no_key = RedditCollector(api_key=None, use_tavily=True)
-        assert collector_no_key.collect(sample_niche, use_cache=False) == []
-
-
-@patch("tavily.TavilyClient")
-def test_two_queries_per_niche_with_default_budget(mock_tavily_cls, sample_niche):
-    """With default budget knobs (max_seeds=1, max_intents=2, max_queries_per_intent=1),
-    exactly two Tavily search calls must be made per niche (pain + regret intents),
-    regardless of how many seed keywords the niche has."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.return_value = {"results": []}
-
-    niche_with_many_seeds = Niche(
-        id="multi_seed",
-        name="Multi seed niche",
-        seed_keywords=["seed one", "seed two", "seed three"],
-    )
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    collector.collect(niche_with_many_seeds, use_cache=False)
-
-    assert mock_client.search.call_count == 2
+    cm = COMMENT_PATTERN.search("761 votes · 49 comments")
+    assert cm is not None
+    assert "49" in cm.group(0)
 
 
-@patch("tavily.TavilyClient")
-def test_regret_intent_included_with_default_budget(mock_tavily_cls, sample_niche):
-    """The regret intent ("waste of money" / "regret buying") must be queried
-    alongside pain by default — it's the clearest signal of product risk, and was
-    previously never collected because max_intents defaulted to 1."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.return_value = {"results": []}
+def test_scrape_reddit_search_parses_html(sample_niche):
+    """Tests DOM parsing of Reddit search results with mock BrowserManager."""
+    mock_html = """
+    <html><body>
+    <div class="post-card">
+      <a href="/r/gifts/comments/abc1234/great_christmas_ideas_for_mom/">Great Christmas Ideas For Mom</a>
+      <span>761 votes · 49 comments</span>
+    </div>
+    </body></html>
+    """
+    mock_browser = MagicMock()
+    mock_browser.fetch_page_content.return_value = mock_html
 
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    collector.collect(sample_niche, use_cache=False)
-
-    queries = [call.kwargs["query"] for call in mock_client.search.call_args_list]
-    assert any("waste of money" in q for q in queries)
-    assert any("hard to choose" in q for q in queries)
-
-
-def test_strip_boilerplate_removes_navigation_junk():
-    """Patterns copied verbatim from real Tavily responses (data/raw/reddit_*.json)
-    must be stripped, while the genuine post content survives intact."""
-    from src.collectors.reddit import _strip_boilerplate
-
-    raw = (
-        "Skip to main contentChristmas Gift Ideas for hard to shop for dad? "
-        "Open menu Open navigationGo to Reddit Home. Get App Get the Reddit app "
-        "Log InLog in to Reddit. Expand user menu Open settings menu. "
-        "So, my dad is near impossible to get gifts for. He likes heavy metal music."
-    )
-    cleaned = _strip_boilerplate(raw)
-
-    assert "skip to main content" not in cleaned.lower()
-    assert "open menu" not in cleaned.lower()
-    assert "go to reddit home" not in cleaned.lower()
-    assert "log in to reddit" not in cleaned.lower()
-    assert "expand user menu" not in cleaned.lower()
-    assert "So, my dad is near impossible to get gifts for. He likes heavy metal music." in cleaned
-
-
-def test_strip_boilerplate_removes_reply_thread_artifacts():
-    """Comment-thread chrome ("3 more replies", "[deleted]", "•9mo ago") must not be
-    mistaken for genuine customer testimony."""
-    from src.collectors.reddit import _strip_boilerplate
-
-    raw = (
-        "Fine jewelry in her style is a great gift. [deleted]\n\n•9mo ago\n\n"
-        "3 more replies \n\n1 more reply"
-    )
-    cleaned = _strip_boilerplate(raw)
-
-    assert "[deleted]" not in cleaned
-    assert "more repl" not in cleaned.lower()
-    assert "mo ago" not in cleaned.lower()
-    assert "Fine jewelry in her style is a great gift." in cleaned
-
-
-@patch("tavily.TavilyClient")
-def test_boilerplate_stripping_applied_before_length_filter(mock_tavily_cls, sample_niche):
-    """A result that is only >=40 chars because of navigation junk must still be
-    dropped once that junk is stripped — the length filter must run on cleaned text,
-    not raw Tavily content."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "Mostly chrome, barely any content",
-                "url": "https://www.reddit.com/r/gifts/comments/junkonly/test/",
-                "content": "Skip to main content Open menu Open navigation Go to Reddit Home. OK.",
-            }
-        ]
-    }
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    results = collector.collect(sample_niche, use_cache=False)
-
-    assert len(results) == 0
-
-
-@patch("tavily.TavilyClient")
-def test_deduplication_by_post_id(mock_tavily_cls, sample_niche):
-    """Duplicate posts across multiple queries must be deduplicated by post_id."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-
-    # Return the exact same post for every query
-    duplicate_result = {
-        "title": "Looking for the best Christmas gifts",
-        "url": "https://www.reddit.com/r/gifts/comments/dup123/looking_for_gifts/",
-        "content": "A very detailed discussion about what gifts people actually want for Christmas this year.",
-        "score": 0.95,
-    }
-    mock_client.search.return_value = {"results": [duplicate_result]}
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    results = collector.collect(sample_niche, use_cache=False)
-
-    post_ids = [item.post_id for item in results]
-    assert len(post_ids) == 1
-    assert post_ids[0] == "dup123"
-
-
-@patch("tavily.TavilyClient")
-def test_resilience_to_single_query_failure(mock_tavily_cls, sample_niche):
-    """A failure in one query must not crash the entire collector."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.side_effect = RuntimeError("Temporary network timeout")
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    collector.backoff_base = 0.01  # Speed up test retries
-    results = collector.collect(sample_niche, use_cache=False)
-
-    assert isinstance(results, list)
-    assert results == []
-
-
-@patch("tavily.TavilyClient")
-def test_no_fabricated_text_or_upvotes(mock_tavily_cls, sample_niche):
-    """Output evidence records must not contain fabricated prefixes or fake upvote metrics."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "Gift ideas for someone who has everything",
-                "url": "https://www.reddit.com/r/GiftIdeas/comments/real456/ideas/",
-                "content": "Stop buying cheap plastic gadgets that get thrown away. Focus on useful experiences.",
-                "score": 0.92,
-            }
-        ]
-    }
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    results = collector.collect(sample_niche, use_cache=False)
-
-    assert len(results) > 0
-    for r in results:
-        # Check absence of fabricated strings
-        assert "Thảo luận cộng đồng" not in r.text
-        assert "Insight:" not in r.text
-        assert r.value is None
-        assert "upvote" not in (r.text.lower())
-        assert r.intent == "pain"  # first intent in config (max_intents=1)
-        assert r.subreddit == "GiftIdeas"
-        assert r.post_id == "real456"
-        assert r.relevance == 0.92
-
-
-@patch("tavily.TavilyClient")
-def test_snippet_verbatim_and_max_500_chars(mock_tavily_cls, sample_niche):
-    """Snippet must be verbatim from Tavily content, truncated to at most 500 characters."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-
-    very_long_content = "Authentic user comment content. " * 30  # ~960 chars
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "Long review of gifts",
-                "url": "https://www.reddit.com/r/BuyItForLife/comments/long789/review/",
-                "content": very_long_content,
-                "score": 0.85,
-            }
-        ]
-    }
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    results = collector.collect(sample_niche, use_cache=False)
+    collector = RedditCollector(browser_manager=mock_browser)
+    results = collector._scrape_reddit_search("gifts", "christmas gift ideas")
 
     assert len(results) == 1
-    snippet = results[0].snippet
-    assert len(snippet) <= 500
-    assert very_long_content.startswith(snippet)
+    post = results[0]
+    assert post["post_id"] == "abc1234"
+    assert post["subreddit"] == "gifts"
+    assert post["score"] == 761
+    assert post["comment_count"] == 49
+    assert post["source_url"] == "https://www.reddit.com/r/gifts/comments/abc1234/"
 
 
-@patch("tavily.TavilyClient")
-def test_drop_empty_title_or_short_snippet(mock_tavily_cls, sample_niche):
-    """Records with empty titles or snippets shorter than 40 chars must be ignored."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
+def test_collect_returns_authentic_evidence(sample_niche):
+    """Tests collect() workflow and Evidence creation."""
+    mock_browser = MagicMock()
+    mock_browser.fetch_page_content.return_value = """
+    <html><body>
+    <div>
+      <a href="/r/gifts/comments/post99/best_gift_ever/">Best Gift Ever</a>
+      <span>150 votes · 20 comments</span>
+    </div>
+    </body></html>
+    """
+    collector = RedditCollector(browser_manager=mock_browser)
+    evidence_list = collector.collect(sample_niche, use_cache=False)
 
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "",
-                "url": "https://www.reddit.com/r/gifts/comments/bad1/test/",
-                "content": "Valid length content that should be skipped due to empty title.",
-            },
-            {
-                "title": "Short snippet post",
-                "url": "https://www.reddit.com/r/gifts/comments/bad2/test/",
-                "content": "Too short.",
-            },
-        ]
-    }
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    results = collector.collect(sample_niche, use_cache=False)
-    assert len(results) == 0
-
-
-@patch("tavily.TavilyClient")
-def test_writes_cache_even_when_use_cache_false(mock_tavily_cls, sample_niche):
-    """use_cache=False must only skip the cache *read*, not the write — matching
-    google_suggest/web_search/serpapi_trends, which always persist raw results so
-    data/raw/ stays inspectable regardless of the cache toggle. This was the root
-    cause of Reddit producing zero cache files while every other collector wrote
-    theirs during a --no-cache run."""
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "No-cache write test",
-                "url": "https://www.reddit.com/r/gifts/comments/nocache1/test/",
-                "content": "This result must still be written to disk even though use_cache=False.",
-                "score": 0.5,
-            }
-        ]
-    }
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    collector.collect(sample_niche, use_cache=False)
-
-    # Niche-level cache file must exist despite use_cache=False.
-    cached = cache.get_raw(collector.name, sample_niche.name)
-    assert cached is not None
-    assert len(cached) == 1
-    assert cached[0]["post_id"] == "nocache1"
-
-
-@patch("tavily.TavilyClient")
-def test_query_caching(mock_tavily_cls):
-    """Second call with use_cache=True should load results from cache and not call Tavily again."""
-    import uuid
-    mock_client = MagicMock()
-    mock_tavily_cls.return_value = mock_client
-
-    mock_client.search.return_value = {
-        "results": [
-            {
-                "title": "Cached test thread",
-                "url": "https://www.reddit.com/r/gifts/comments/cache999/test/",
-                "content": "This is content that will be cached and verified on secondary lookup.",
-                "score": 0.99,
-            }
-        ]
-    }
-
-    random_id = uuid.uuid4().hex[:8]
-    unique_niche = Niche(
-        id=f"cache_niche_{random_id}",
-        name=f"Cache Niche {random_id}",
-        seed_keywords=[f"test_cache_kw_{random_id}"],
-    )
-
-    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
-    # First run (must query and populate cache)
-    results1 = collector.collect(unique_niche, use_cache=True)
-    initial_search_calls = mock_client.search.call_count
-    assert initial_search_calls > 0
-    assert len(results1) > 0
-
-    # Second run (must use cache without new network calls)
-    results2 = collector.collect(unique_niche, use_cache=True)
-    assert mock_client.search.call_count == initial_search_calls
-    assert len(results2) == len(results1)
-    assert results2[0].post_id == results1[0].post_id
+    assert len(evidence_list) >= 1
+    first = evidence_list[0]
+    assert isinstance(first, Evidence)
+    assert first.source == "reddit"
+    assert "150 upvotes" in first.text or "150 upvotes" in (first.value or "")
+    assert first.source_url == "https://www.reddit.com/r/gifts/comments/post99/"

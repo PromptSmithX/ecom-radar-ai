@@ -33,14 +33,14 @@ Tool kết hợp 4 nguồn dữ liệu đa dạng để phản ánh trọn vẹn
 2. **Google Trends:** Đo lường xu hướng tìm kiếm trong 90 ngày (`today 3-m`), phát hiện các truy vấn bứt phá mạnh (`rising / breakout queries` tăng trưởng từ +50% đến +650%). Có 2 nguồn lấy dữ liệu, chọn được qua UI (`Nguồn dữ liệu Trend`) hoặc CLI (`--trend-source`):
    - `google_trends` (mặc định): dùng `pytrends` scrape trực tiếp, miễn phí nhưng dễ bị lỗi 429 (lib đã bị archive). Có circuit breaker tự chuyển sang dữ liệu fallback khi bị rate-limit.
    - `serpapi`: dùng [SerpApi](https://serpapi.com) (free tier 250 request/tháng) để lấy đúng dữ liệu Google Trends qua API ổn định hơn, chỉ tốn 1 request/seed keyword. Cần `SERPAPI_API_KEY` trong `.env`.
-3. **Reddit Community:** Tìm kiếm thảo luận người dùng trên Reddit qua Tavily API theo 4 nhóm intent rõ rệt:
-   - `ask`: Các câu hỏi tìm kiếm ý tưởng (vd: `looking for {seed}`, `what should I get {seed}`).
-   - `pain`: Nỗi đau và sự khó khăn khi chọn lựa (vd: `{seed} hard to choose`, `{seed} who has everything`).
-   - `regret`: Phàn nàn và hối tiếc sau khi mua (vd: `{seed} waste of money`, `regret buying {seed}`).
-   - `recommend`: Sản phẩm đáng giá được khuyên dùng (vd: `best {seed} worth it`, `{seed} actually use`).
-   - *Lưu ý về số liệu:* Bộ thu thập lọc nghiêm ngặt các permalink thread thật (`reddit.com/r/<sub>/comments/<id>/...`), trích xuất snippet nguyên văn, khử trùng lặp theo `post_id`, ưu tiên subreddit chất lượng (`r/gifts`, `r/GiftIdeas`, `r/BuyItForLife`, `r/AskMen`, `r/AskWomen`, `r/Etsy`), và tuyệt đối KHÔNG tự gán/bịa đặt số lượng upvotes hay comment count.
-   - *Hướng mở rộng (TODO):* Enrich bài viết bằng PRAW (Python Reddit API Wrapper) dựa trên `post_id` thu thập được để lấy điểm số thực tế (`score`/upvotes), số lượng bình luận (`num_comments`) và các top comments chất lượng cao.
-4. **Web Search & Market Benchmarks (Tavily / E-commerce Listicles):** Khảo sát mức giá trung bình của thị trường, các sản phẩm bán chạy (bestsellers) trên Amazon/Etsy, và đánh giá mức độ cạnh tranh.
+3. **Reddit Community:** Tìm kiếm thảo luận người dùng trên Reddit qua Playwright Stealth + DuckDuckGo:
+   - Thu thập trực tiếp từ các subreddit uy tín (`r/gifts`, `r/GiftIdeas`, `r/BuyItForLife`, `r/AskMen`, `r/AskWomen`).
+   - Trích xuất số lượng **upvotes thực tế** và **số lượng bình luận** thật từ bài đăng.
+   - Bóc tách nỗi đau (*pain points*), câu hỏi (*questions*), và gợi ý sản phẩm đáng tiền (*recommendations*).
+   - Chi phí: **$0**, không cần tài khoản Reddit API hay bên thứ 3.
+4. **Amazon Products & Keywords:** Cào giá bán, số lượt đánh giá, rating sao, huy hiệu Best Seller / Amazon's Choice bằng Playwright Stealth, kết hợp Amazon Completion API lấy từ khóa tìm kiếm của người mua sắm.
+5. **Etsy Marketplace:** Khảo sát giá niêm yết, tên shop và ý tưởng sản phẩm thủ công/cá nhân hóa từ các shop đối thủ trên Etsy qua DuckDuckGo search indexing.
+6. **Web Search & Market Benchmarks:** Khảo sát mức giá trung bình của thị trường và đối thủ qua DuckDuckGo Search (hoàn toàn miễn phí, không tốn credit).
 
 ### 🛡️ Cơ chế chống Hallucination (Chống bịa số / URL):
 - **Nguyên tắc dữ liệu thô:** LLM không tự sáng tạo số liệu. Mọi số liệu trong báo cáo bắt buộc phải xuất phát từ gói bằng chứng (*Evidence Pack*) được thu thập ở bước 1. Nếu thiếu số liệu, hệ thống tự động ghi nhận chuỗi `"Không có dữ liệu"`.
@@ -87,7 +87,6 @@ Nội dung file `.env`:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
-TAVILY_API_KEY=your_tavily_api_key_here
 # Tuy chon - chi can khi chon nguon Trend "serpapi" tren UI/CLI (free tier 250 request/thang)
 SERPAPI_API_KEY=your_serpapi_api_key_here
 REDDIT_USER_AGENT=trend-research/0.1 (by ecomm-researcher)
