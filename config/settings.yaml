@@ -32,6 +32,7 @@ collectors:
     max_intents: 2
     max_queries_per_intent: 1
     max_results_per_query: 10
+    min_relevance: 0.2
     preferred_subreddits:
       - "gifts"
       - "GiftIdeas"
@@ -44,8 +45,8 @@ collectors:
         - "{seed} hard to choose"
         - "{seed} who has everything"
       regret:
-        - "{seed} waste of money"
         - "regret buying {seed}"
+        - "{seed} waste of money"
       ask:
         - "looking for {seed}"
         - "what should I get {seed}"
@@ -63,12 +64,19 @@ collectors:
       - "bing"
     request_delay: 1.0
     max_suggestions: 6
+  amazon:
+    enabled: false
+    max_results: 8
+    sleep_seconds: 1.5
+    cooldown_minutes: 30
+    region_domain: "www.amazon.com"
 
 digest:
   max_items: 25
   max_items_llm: 35
   source_priority:
     - "reddit"
+    - "amazon"
     - "serpapi_trends"
     - "google_trends"
     - "web_search"

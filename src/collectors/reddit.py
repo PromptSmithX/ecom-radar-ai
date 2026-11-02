@@ -40,8 +40,8 @@ DEFAULT_INTENTS: Dict[str, List[str]] = {
         "{seed} who has everything",
     ],
     "regret": [
-        "{seed} waste of money",
         "regret buying {seed}",
+        "{seed} waste of money",
     ],
     "ask": [
         "looking for {seed}",
@@ -76,6 +76,35 @@ _BOILERPLATE_PATTERNS = [
         r"\[deleted\]",
     ]
 ]
+
+
+# Generic gift-domain words carry no topic signal, so they are excluded when
+# deriving a niche's distinguishing vocabulary. Everything else from the niche
+# name/seeds (e.g. "valentine", "christmas", "stocking") anchors relevance.
+_TOPIC_STOPWORDS = {
+    "gift", "gifts", "idea", "ideas", "for", "the", "best",
+    "and", "of", "my", "your", "her", "him", "a", "to", "with",
+}
+
+
+def _topic_tokens(niche_name: str, seeds: List[str]) -> Set[str]:
+    """Distinguishing topic words for a niche, drawn from its name + seed keywords
+    with generic gift words removed (e.g. 'Valentine gift' -> {'valentine'})."""
+    words = re.findall(r"[a-z]+", f"{niche_name} {' '.join(seeds)}".lower())
+    return {w for w in words if len(w) >= 3 and w not in _TOPIC_STOPWORDS}
+
+
+def _is_on_topic(title: str, snippet: str, topic_tokens: Set[str]) -> bool:
+    """Return True if at least one topic token appears in the title/snippet.
+
+    Keeps generic-phrase queries (e.g. "waste of money") from dragging in unrelated
+    subreddits. When topic_tokens is empty the niche gives no signal to filter on, so
+    nothing is dropped.
+    """
+    if not topic_tokens:
+        return True
+    haystack = f"{title} {snippet}".lower()
+    return any(tok in haystack for tok in topic_tokens)
 
 
 def _is_near_duplicate(
@@ -132,6 +161,7 @@ class RedditCollector(Collector):
         self.use_tavily = use_tavily if use_tavily is not None else getattr(reddit_cfg, "use_tavily", True)
 
         self.max_results_per_query: int = getattr(reddit_cfg, "max_results_per_query", 10) or 10
+        self.min_relevance: float = getattr(reddit_cfg, "min_relevance", 0.2)
         self.time_range: str = getattr(reddit_cfg, "time_range", "year") or "year"
         self.search_depth: str = getattr(reddit_cfg, "search_depth", "basic") or "basic"
         self.preferred_subreddits: List[str] = getattr(
@@ -272,6 +302,15 @@ class RedditCollector(Collector):
         collected_snippets: List[str] = []
         evidence_list: List[Evidence] = []
 
+        # Topic vocabulary for the on-topic gate (built from the full seed list,
+        # not just the budget-capped seed used for querying).
+        topic_tokens = _topic_tokens(niche.name, list(niche.seed_keywords))
+        # Curated gift subreddits are on-topic by provenance, so the on-topic gate
+        # (which exists to block generic-phrase queries leaking into *unrelated*
+        # subreddits) is skipped for them — this keeps genuine posts that phrase the
+        # occasion differently (e.g. "xmas" vs "christmas").
+        pref_lower = {s.lower() for s in self.preferred_subreddits}
+
         # 6. Query by intent
         for seed in seeds:
             for intent_name, templates in intent_items:
@@ -326,6 +365,35 @@ class RedditCollector(Collector):
                             # Drop records with too short snippets
                             continue
 
+                        # Extract relevance score (never call it upvotes)
+                        score_val = r.get("score")
+                        relevance: Optional[float] = None
+                        if score_val is not None:
+                            try:
+                                relevance = float(score_val)
+                            except (ValueError, TypeError):
+                                relevance = None
+
+                        # Relevance gate: drop weakly-related hits. Records with no
+                        # score are kept so a missing field never silently discards data.
+                        if relevance is not None and relevance < self.min_relevance:
+                            logger.debug(
+                                f"Dropping low-relevance snippet (post_id={post_id}, score={relevance}) "
+                                f"for niche '{niche.name}'"
+                            )
+                            continue
+
+                        # On-topic gate: require a niche topic token so generic-phrase
+                        # queries can't drag in unrelated subreddits. Curated gift
+                        # subreddits are exempt (on-topic by provenance).
+                        if subreddit.lower() not in pref_lower and not _is_on_topic(
+                            title, snippet, topic_tokens
+                        ):
+                            logger.debug(
+                                f"Dropping off-topic snippet (post_id={post_id}) for niche '{niche.name}'"
+                            )
+                            continue
+
                         # Semantic dedup: skip if snippet overlaps ≥60 % with one already kept
                         if _is_near_duplicate(snippet, collected_snippets):
                             logger.debug(
@@ -335,15 +403,6 @@ class RedditCollector(Collector):
 
                         seen_post_ids.add(post_id)
                         collected_snippets.append(snippet)
-
-                        # Extract relevance score (never call it upvotes)
-                        score_val = r.get("score")
-                        relevance: Optional[float] = None
-                        if score_val is not None:
-                            try:
-                                relevance = float(score_val)
-                            except (ValueError, TypeError):
-                                relevance = None
 
                         # Retain canonical thread URL
                         canonical_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/"
@@ -367,7 +426,6 @@ class RedditCollector(Collector):
                         evidence_list.append(ev)
 
         # 8. Prioritize preferred subreddits
-        pref_lower = {s.lower() for s in self.preferred_subreddits}
         evidence_list.sort(
             key=lambda item: 0 if (item.subreddit and item.subreddit.lower() in pref_lower) else 1
         )

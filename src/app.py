@@ -120,6 +120,15 @@ with st.sidebar:
              "Tắt đi sẽ KHÔNG có dữ liệu Reddit và bỏ qua Web Search. Chi phí mặc định ~1 credit/niche.",
     )
 
+    st.markdown("---")
+    st.markdown("#### 🛒 Nguồn bổ sung (miễn phí, không cần key)")
+    use_amazon = st.checkbox(
+        "Dùng Amazon (search results: giá, rating, Best Seller)",
+        value=settings.collectors.amazon.enabled,
+        help="Cào trang kết quả tìm kiếm Amazon theo seed keyword để lấy giá, rating, số review và badge Best Seller/Amazon's Choice. "
+             "Không cần API key, nhưng Amazon có thể chặn IP (503/CAPTCHA) — khi đó sẽ không có dữ liệu cho tới khi hết cooldown.",
+    )
+
     with st.expander("🔑 Cấu hình API Keys"):
         gemini_key = st.text_input(
             "Gemini API Key:",
@@ -212,6 +221,7 @@ if run_button:
             api_key_serpapi=active_serpapi_key,
             use_cache=use_cache,
             use_tavily=use_tavily,
+            use_amazon=use_amazon,
         )
 
         try:
@@ -317,6 +327,7 @@ with tab_about:
   2. **Google Trends:** Chỉ số mức độ quan tâm và các từ khóa đang bứt phá (breakout/rising). Có thể chọn lấy qua **pytrends** (miễn phí, dễ bị 429) hoặc **SerpApi** (free tier 250 request/tháng, ổn định hơn) ở thanh bên trái.
   3. **Reddit Community:** Trích xuất các khó khăn, than phiền thực tế từ người dùng (`r/gifts`, `r/BuyItForLife`, `r/AskMen`...).
   4. **Web Search / Market Benchmarks:** Khảo sát đối thủ, mức giá thị trường.
+  5. **Amazon (tùy chọn):** Cào trang kết quả tìm kiếm theo seed keyword — tên sản phẩm, giá, rating, số review, badge Best Seller/Amazon's Choice. Miễn phí, không cần key, nhưng có thể bị Amazon chặn IP tạm thời.
 - **Nguyên tắc chống bịa số:** Mọi số liệu trong báo cáo đều được trích xuất từ dữ liệu thô, nếu thiếu sẽ hiển thị *"Không có dữ liệu"*.
 """
     )

@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Optional, Type
 from src.core.config import settings
 from src.core.models import Evidence, Niche
+from .amazon import AmazonCollector
 from .base import Collector
 from .google_suggest import GoogleSuggestCollector
 from .google_trends import GoogleTrendsCollector
@@ -19,6 +20,7 @@ COLLECTORS: List[Type[Collector]] = [
     GoogleTrendsCollector,
     RedditCollector,
     WebSearchCollector,
+    AmazonCollector,
 ]
 
 # Interchangeable trend-data providers: GoogleTrendsCollector's slot in COLLECTORS can be
@@ -34,6 +36,7 @@ def build_collectors(
     trend_provider: Optional[str] = None,
     trend_api_key: Optional[str] = None,
     use_tavily: bool = True,
+    use_amazon: Optional[bool] = None,
 ) -> List[Collector]:
     """Instantiates the canonical collector list, substituting whichever trend provider
     (Google Trends vs SerpApi) was requested in place of the default GoogleTrendsCollector slot.
@@ -42,9 +45,13 @@ def build_collectors(
     use_tavily=True (default) enables both RedditCollector and WebSearchCollector.
     Setting use_tavily=False skips WebSearchCollector entirely and makes RedditCollector
     return no evidence (no Reddit data available without Tavily).
+
+    use_amazon defaults to AmazonCollector's `enabled` config flag when None, so callers
+    that don't care can omit it and still respect config/settings.yaml.
     """
     trend_provider = trend_provider or settings.collectors.trend_provider
     trend_cls = TREND_PROVIDERS.get(trend_provider, GoogleTrendsCollector)
+    use_amazon = settings.collectors.amazon.enabled if use_amazon is None else use_amazon
 
     instances: List[Collector] = []
     for cls in COLLECTORS:
@@ -56,6 +63,9 @@ def build_collectors(
             if use_tavily:
                 instances.append(cls())
             # else: skip WebSearchCollector — it only uses Tavily
+        elif cls is AmazonCollector:
+            if use_amazon:
+                instances.append(cls())
         else:
             instances.append(cls())
     return instances

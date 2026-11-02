@@ -57,6 +57,11 @@ class RedditConfig(BaseModel):
     # Tavily bills per search, not per result, so a larger page size is free.
     max_results_per_query: int = 10
 
+    # Drop results whose Tavily relevance score (semantic similarity of the crawled
+    # page to the query, 0-1) falls below this floor. Records with no score are kept
+    # so a missing field never silently discards data.
+    min_relevance: float = 0.2
+
     preferred_subreddits: List[str] = Field(
         default_factory=lambda: ["gifts", "GiftIdeas", "BuyItForLife", "AskMen", "AskWomen", "Etsy"]
     )
@@ -71,8 +76,10 @@ class RedditConfig(BaseModel):
                 "{seed} who has everything",
             ],
             "regret": [
-                "{seed} waste of money",
+                # Product-anchored phrasing keeps Tavily on-topic; the bare
+                # "{seed} waste of money" phrase matched unrelated subreddits.
                 "regret buying {seed}",
+                "{seed} waste of money",
             ],
             "ask": [
                 "looking for {seed}",
@@ -88,6 +95,15 @@ class RedditConfig(BaseModel):
 
 class WebSearchConfig(BaseModel):
     max_results: int = 5
+
+
+class AmazonConfig(BaseModel):
+    # Disabled by default: scraping amazon.com risks 503/CAPTCHA blocks on the host IP.
+    enabled: bool = False
+    max_results: int = 8
+    sleep_seconds: float = 1.5
+    cooldown_minutes: int = 30
+    region_domain: str = "www.amazon.com"
 
 
 class GoogleSuggestConfig(BaseModel):
@@ -108,6 +124,7 @@ class CollectorsConfig(BaseModel):
     reddit: RedditConfig = Field(default_factory=RedditConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     google_suggest: GoogleSuggestConfig = Field(default_factory=GoogleSuggestConfig)
+    amazon: AmazonConfig = Field(default_factory=AmazonConfig)
 
 
 class DigestConfig(BaseModel):
@@ -119,6 +136,7 @@ class DigestConfig(BaseModel):
     source_priority: List[str] = Field(
         default_factory=lambda: [
             "reddit",
+            "amazon",
             "serpapi_trends",
             "google_trends",
             "web_search",

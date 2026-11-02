@@ -76,6 +76,7 @@ def run(
     trend_source: Optional[str] = typer.Option(None, "--trend-source", help="Nguồn dữ liệu Trend: google_trends | serpapi"),
     use_cache: bool = typer.Option(True, "--cache/--no-cache", help="Có sử dụng dữ liệu đã cache hay không"),
     use_tavily: bool = typer.Option(True, "--tavily/--no-tavily", help="Dùng Tavily cho Reddit + Web Search. Reddit JSON công khai đã bị chặn (yêu cầu đăng nhập), nên tắt cờ này sẽ không có dữ liệu Reddit."),
+    use_amazon: Optional[bool] = typer.Option(None, "--amazon/--no-amazon", help="Cào Amazon search results (giá, rating, badge Best Seller). Mặc định theo config/settings.yaml."),
 ):
     """Executes the full AI trend research pipeline and outputs a Markdown report."""
     category, all_niches = load_niches()
@@ -137,13 +138,15 @@ def run(
         trend_provider=trend_provider,
         use_cache=use_cache,
         use_tavily=use_tavily,
+        use_amazon=use_amazon,
     )
 
     console.print(f"\n[bold green]=== BẮT ĐẦU NGHIÊN CỨU XU HƯỚNG ===[/bold green]")
     console.print(f"Danh mục: [bold cyan]{category}[/bold cyan]")
     console.print(f"Số lượng Niche: [bold cyan]{len(selected_niches)}[/bold cyan]")
     tavily_status = "BẬT" if use_tavily else "TẮT"
-    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Tavily: [bold]{tavily_status}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
+    amazon_status = "BẬT" if (settings.collectors.amazon.enabled if use_amazon is None else use_amazon) else "TẮT"
+    console.print(f"Writer LLM: [bold]{w_provider}[/bold] | Digest LLM: [bold]{d_provider}[/bold] | Trend: [bold]{trend_provider}[/bold] | Tavily: [bold]{tavily_status}[/bold] | Amazon: [bold]{amazon_status}[/bold] | Cache: [bold]{use_cache}[/bold]\n")
 
     def progress_callback(stage: str, fraction: float, msg: str):
         pct = int(fraction * 100)

@@ -7,7 +7,13 @@ Reddit's own public search now requires login (old.reddit.com/search.json redire
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
-from src.collectors.reddit import REDDIT_THREAD_PATTERN, RedditCollector, _is_near_duplicate
+from src.collectors.reddit import (
+    REDDIT_THREAD_PATTERN,
+    RedditCollector,
+    _is_near_duplicate,
+    _is_on_topic,
+    _topic_tokens,
+)
 from src.core.cache import cache
 from src.core.models import Evidence, Niche
 
@@ -92,9 +98,10 @@ def test_two_queries_per_niche_with_default_budget(mock_tavily_cls, sample_niche
 
 @patch("tavily.TavilyClient")
 def test_regret_intent_included_with_default_budget(mock_tavily_cls, sample_niche):
-    """The regret intent ("waste of money" / "regret buying") must be queried
-    alongside pain by default — it's the clearest signal of product risk, and was
-    previously never collected because max_intents defaulted to 1."""
+    """The regret intent must be queried alongside pain by default — it's the clearest
+    signal of product risk. The running regret template is the product-anchored
+    "regret buying {seed}" (the bare "waste of money" phrase was demoted because it
+    matched unrelated subreddits)."""
     mock_client = MagicMock()
     mock_tavily_cls.return_value = mock_client
     mock_client.search.return_value = {"results": []}
@@ -103,7 +110,7 @@ def test_regret_intent_included_with_default_budget(mock_tavily_cls, sample_nich
     collector.collect(sample_niche, use_cache=False)
 
     queries = [call.kwargs["query"] for call in mock_client.search.call_args_list]
-    assert any("waste of money" in q for q in queries)
+    assert any("regret buying" in q for q in queries)
     assert any("hard to choose" in q for q in queries)
 
 
@@ -215,7 +222,7 @@ def test_no_fabricated_text_or_upvotes(mock_tavily_cls, sample_niche):
     mock_client.search.return_value = {
         "results": [
             {
-                "title": "Gift ideas for someone who has everything",
+                "title": "Christmas gift ideas for someone who has everything",
                 "url": "https://www.reddit.com/r/GiftIdeas/comments/real456/ideas/",
                 "content": "Stop buying cheap plastic gadgets that get thrown away. Focus on useful experiences.",
                 "score": 0.92,
@@ -249,7 +256,7 @@ def test_snippet_verbatim_and_max_500_chars(mock_tavily_cls, sample_niche):
     mock_client.search.return_value = {
         "results": [
             {
-                "title": "Long review of gifts",
+                "title": "Long review of christmas gifts",
                 "url": "https://www.reddit.com/r/BuyItForLife/comments/long789/review/",
                 "content": very_long_content,
                 "score": 0.85,
@@ -306,7 +313,7 @@ def test_writes_cache_even_when_use_cache_false(mock_tavily_cls, sample_niche):
             {
                 "title": "No-cache write test",
                 "url": "https://www.reddit.com/r/gifts/comments/nocache1/test/",
-                "content": "This result must still be written to disk even though use_cache=False.",
+                "content": "This christmas result must still be written to disk even though use_cache=False.",
                 "score": 0.5,
             }
         ]
@@ -395,7 +402,7 @@ def test_semantic_dedup_drops_overlapping_snippets(mock_tavily_cls, sample_niche
     mock_tavily_cls.return_value = mock_client
 
     shared_text = (
-        "hard to buy gifts for people who have everything "
+        "hard to buy christmas gifts for people who have everything "
         "I am in love with this subreddit for gift ideas"
     )
     mock_client.search.return_value = {
@@ -437,8 +444,8 @@ def test_kind_mapped_from_intent(mock_tavily_cls, sample_niche):
     # Return distinct posts with completely different content per call
     # so semantic dedup does not collapse them.
     distinct_contents = [
-        "My dad is impossible to shop for. He never tells us what he wants and returns everything we buy him.",
-        "I bought an expensive watch last year and totally regret it. Complete waste of money for something nobody wears.",
+        "My dad is impossible to shop for this christmas. He never tells us what he wants and returns everything we buy him.",
+        "I bought an expensive christmas watch last year and totally regret it. Complete waste of money for something nobody wears.",
     ]
     call_count = {"n": 0}
     def side_effect(**kwargs):
@@ -465,3 +472,107 @@ def test_kind_mapped_from_intent(mock_tavily_cls, sample_niche):
     # Both pain and regret map to "complaint"
     for r in results:
         assert r.kind == "complaint", f"Expected 'complaint' for intent '{r.intent}', got '{r.kind}'"
+
+
+# ---------------------------------------------------------------------------
+# Relevance threshold + on-topic filter tests
+# ---------------------------------------------------------------------------
+
+
+def test_topic_tokens_builds_from_niche():
+    """Topic tokens drop generic gift words but keep distinguishing ones; an empty
+    token set disables the on-topic filter (returns True for anything)."""
+    tokens = _topic_tokens("Valentine gift", ["valentine gifts for her", "couple gift"])
+    assert "valentine" in tokens
+    assert "couple" in tokens
+    assert "gift" not in tokens and "gifts" not in tokens and "for" not in tokens
+
+    assert _is_on_topic("Best valentine presents", "ideas for her", tokens)
+    assert not _is_on_topic("Wrapping paper is a waste of money", "throw it away", tokens)
+    # No topic signal -> never filter.
+    assert _is_on_topic("anything at all", "really anything", set())
+
+
+@patch("tavily.TavilyClient")
+def test_relevance_threshold_drops_low_score(mock_tavily_cls, sample_niche):
+    """Results below min_relevance must be dropped; those at/above it kept."""
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+    mock_client.search.return_value = {
+        "results": [
+            {
+                "title": "Strong christmas gift thread",
+                "url": "https://www.reddit.com/r/gifts/comments/high111/test/",
+                "content": "A genuinely useful christmas discussion about what gifts people actually keep.",
+                "score": 0.9,
+            },
+            {
+                "title": "Weak christmas gift thread",
+                "url": "https://www.reddit.com/r/gifts/comments/low222/test/",
+                "content": "Another christmas discussion that barely relates to the query at all here.",
+                "score": 0.05,
+            },
+        ]
+    }
+
+    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
+    results = collector.collect(sample_niche, use_cache=False)
+
+    post_ids = [r.post_id for r in results]
+    assert "high111" in post_ids
+    assert "low222" not in post_ids
+
+
+@patch("tavily.TavilyClient")
+def test_off_topic_filtered_by_topic_token(mock_tavily_cls, sample_niche):
+    """A result with no niche topic token in its title/snippet must be dropped even
+    when its relevance score is high (generic-phrase query noise)."""
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+    mock_client.search.return_value = {
+        "results": [
+            {
+                "title": "Great christmas gift ideas",
+                "url": "https://www.reddit.com/r/gifts/comments/ontopic1/test/",
+                "content": "Here are some christmas gift ideas people on this subreddit actually loved.",
+                "score": 0.8,
+            },
+            {
+                "title": "Wrapping paper is a waste of money",
+                "url": "https://www.reddit.com/r/unpopularopinion/comments/offtopic2/test/",
+                "content": "You rip off the paper and then throw it away. The designs do not impress me.",
+                "score": 0.8,
+            },
+        ]
+    }
+
+    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
+    results = collector.collect(sample_niche, use_cache=False)
+
+    post_ids = [r.post_id for r in results]
+    assert "ontopic1" in post_ids
+    assert "offtopic2" not in post_ids
+
+
+@patch("tavily.TavilyClient")
+def test_preferred_subreddit_exempt_from_topic_gate(mock_tavily_cls, sample_niche):
+    """A post from a curated gift subreddit must survive the on-topic gate even with
+    no exact topic token (e.g. 'xmas' instead of 'christmas'), since such subreddits
+    are on-topic by provenance."""
+    mock_client = MagicMock()
+    mock_tavily_cls.return_value = mock_client
+    mock_client.search.return_value = {
+        "results": [
+            {
+                "title": "Help me decide what to get my boyfriend for xmas",
+                "url": "https://www.reddit.com/r/gifts/comments/xmas777/test/",
+                "content": "Yes, xmas in 2 days lol. He needs nothing and returns everything I buy him.",
+                "score": 0.56,
+            }
+        ]
+    }
+
+    collector = RedditCollector(api_key="tvly-mock-key", use_tavily=True)
+    results = collector.collect(sample_niche, use_cache=False)
+
+    assert [r.post_id for r in results] == ["xmas777"]
