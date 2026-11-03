@@ -12,15 +12,28 @@
 | **#{{ item.rank }}** | **{{ item.niche }}** | `{{ item.score }}/10` | {{ item.reason }} |
 {% endfor %}
 
-### 2. Top 3 Idea sản phẩm tốt nhất toàn báo cáo
+### 2. Top 3 Idea sản phẩm xuất sắc nhất toàn báo cáo (Product Opportunity Cards)
 {% for idea in report.top_ideas -%}
-{{ loop.index }}. **{{ idea.title }}**
-   - **Bán gì:** {{ idea.what }}
-   - **Cho ai:** {{ idea.for_whom }}
-   - **Vì sao nên bán bây giờ:** {{ idea.why_now }}
-   {% if idea.evidence_refs -%}
-   - **Căn cứ dữ liệu:** {% for ref in idea.evidence_refs %}[Nguồn minh chứng]({{ ref }}){% if not loop.last %}, {% endif %}{% endfor %}
-   {% endif %}
+#### 💡 #{{ loop.index }}. {{ idea.title }}
+- **📦 Bán cái gì:** {{ idea.what }}
+- **🎯 Đối tượng khách hàng:** {{ idea.for_whom }}
+- **⏰ Vì sao nên bán bây giờ:** {{ idea.why_now }}
+{% if idea.differentiation -%}
+- **✨ Điểm khác biệt / Cải tiến (USP):** {{ idea.differentiation }}
+{% endif -%}
+{% if idea.target_price -%}
+- **💵 Giá bán đề xuất & Định vị lợi nhuận:** `{{ idea.target_price }}`
+{% endif -%}
+{% if idea.suggested_channel -%}
+- **🛒 Kênh bán tiềm năng:** {{ idea.suggested_channel }}
+{% endif -%}
+> **Kiểm chứng 3 trụ cột (Validation Dossier):**
+> - 📊 **Nhu cầu (Trends/Search):** {{ idea.demand_proof or "Dựa trên tín hiệu từ khóa tìm kiếm thị trường" }}
+> - 🗣️ **Nỗi đau khách hàng (Reddit Community):** {{ idea.pain_proof or "Dựa trên thảo luận thực tế của cộng đồng" }}
+> - 🥊 **Đối thủ tham chiếu (Market Benchmark):** {{ idea.competitor_benchmark or "So sánh mức giá và định vị sản phẩm hiện hữu" }}
+{% if idea.evidence_refs -%}
+> - 🔗 **Minh chứng dữ liệu:** {% for ref in idea.evidence_refs %}[Xem nguồn dẫn chứng]({{ ref }}){% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
 
 {% endfor %}
 
@@ -50,13 +63,31 @@
 - **Mức độ cạnh tranh:** {{ nr.competition }}
 - **Khoảng giá tham khảo:** `{{ nr.price_range }}`
 
-### 3. Đề xuất Idea sản phẩm
-| Ý tưởng | Bán cái gì | Khách hàng mục tiêu | Vì sao nên bán bây giờ | Căn cứ minh chứng |
-| :--- | :--- | :--- | :--- | :--- |
+### 3. Đề xuất Ý tưởng Sản phẩm Tiềm năng (Product Opportunities)
 {% for id in nr.ideas -%}
-| **{{ id.title }}** | {{ id.what }} | {{ id.for_whom }} | {{ id.why_now }} | {% for ref in id.evidence_refs %}[Minh chứng]({{ ref }}){% if not loop.last %}, {% endif %}{% else %}-{% endfor %} |
+#### 💡 Cơ hội {{ loop.index }}: {{ id.title }}
+- **📦 Mô tả sản phẩm:** {{ id.what }}
+- **🎯 Khách hàng mục tiêu:** {{ id.for_whom }}
+- **⏰ Thời điểm triển khai:** {{ id.why_now }}
+{% if id.differentiation -%}
+- **✨ Điểm khác biệt / Cải tiến (USP):** {{ id.differentiation }}
+{% endif -%}
+{% if id.target_price -%}
+- **💵 Khoảng giá đề xuất:** `{{ id.target_price }}`
+{% endif -%}
+{% if id.suggested_channel -%}
+- **🛒 Kênh phân phối tiềm năng:** {{ id.suggested_channel }}
+{% endif -%}
+> **Hồ sơ kiểm chứng thị trường:**
+> - 📊 **Căn cứ nhu cầu:** {{ id.demand_proof or "Tín hiệu tìm kiếm người dùng đang quan tâm" }}
+> - 🗣️ **Nỗi đau cần giải quyết:** {{ id.pain_proof or "Phản hồi phàn nàn từ người tiêu dùng thực tế" }}
+> - 🥊 **Đối thủ cạnh tranh:** {{ id.competitor_benchmark or "Sản phẩm tương đương hiện có trên sàn" }}
+{% if id.evidence_refs -%}
+> - 🔗 **Nguồn dữ liệu:** {% for ref in id.evidence_refs %}[Link dẫn chứng]({{ ref }}){% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+
 {% else -%}
-| *Đang cập nhật* | - | - | - | - |
+*Đang cập nhật ý tưởng cho niche này*
 {% endfor %}
 
 ---

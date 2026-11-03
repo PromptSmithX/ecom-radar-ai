@@ -25,6 +25,11 @@ class Evidence(BaseModel):
     post_id: Optional[str] = Field(None, description="ID của thread bài viết Reddit")
     title: Optional[str] = Field(None, description="Tiêu đề bài viết nguyên văn từ nguồn")
     snippet: Optional[str] = Field(None, description="Nội dung trích dẫn nguyên văn tối đa 500 ký tự")
+    post_body: Optional[str] = Field(None, description="Nội dung chi tiết của bài đăng (selftext/body)")
+    top_comments: List[str] = Field(default_factory=list, description="Danh sách top comments thảo luận nổi bật")
+    rating: Optional[str] = Field(None, description="Đánh giá sao trung bình (ví dụ: 4.8 out of 5 stars)")
+    review_count: Optional[str] = Field(None, description="Số lượng review của sản phẩm")
+    badge: Optional[str] = Field(None, description="Huy hiệu uy tín (Best Seller, Amazon's Choice, Star Seller...)")
     relevance: Optional[float] = Field(None, description="Score đo lường độ liên quan từ search engine")
     query_used: Optional[str] = Field(None, description="Query đã sử dụng để tìm kiếm")
     is_mock: bool = Field(default=False, description="Đánh dấu dữ liệu chạy thử/mock")
@@ -38,9 +43,15 @@ class KeywordSignal(BaseModel):
 
 class Idea(BaseModel):
     title: str = Field(..., description="Tên ý tưởng sản phẩm")
-    what: str = Field(..., description="Bán cái gì")
+    what: str = Field(..., description="Bán cái gì (Mô tả sản phẩm cụ thể)")
     for_whom: str = Field(..., description="Bán cho ai (khách hàng mục tiêu)")
     why_now: str = Field(..., description="Vì sao nên bán bây giờ")
+    differentiation: Optional[str] = Field(None, description="Điểm khác biệt / Cải tiến (USP) giải quyết nỗi đau của khách hàng")
+    target_price: Optional[str] = Field(None, description="Khoảng giá bán đề xuất & định vị lợi nhuận")
+    suggested_channel: Optional[str] = Field(None, description="Kênh bán tiềm năng (Amazon FBA, Etsy, Shopify, TikTok Shop...)")
+    demand_proof: Optional[str] = Field(None, description="Căn cứ chứng minh nhu cầu từ Google Trends (+% rising, breakout)")
+    pain_proof: Optional[str] = Field(None, description="Căn cứ chứng minh nỗi đau khách hàng từ Reddit (bài viết, than phiền thực tế)")
+    competitor_benchmark: Optional[str] = Field(None, description="Đối thủ tham chiếu trên Amazon/Etsy (giá, rating và điểm yếu cần đánh vào)")
     evidence_refs: List[str] = Field(default_factory=list, description="Dẫn chiếu evidence hoặc keyword liên quan")
 
 

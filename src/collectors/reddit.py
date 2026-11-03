@@ -163,6 +163,69 @@ class RedditCollector(Collector):
             logger.warning(f"DDG fallback for Reddit query '{query}' failed: {e}")
         return posts
 
+    def _scrape_thread_detail(self, url: str) -> tuple[Optional[str], List[str]]:
+        """Scrapes post body and top comments from a specific Reddit thread.
+        
+        Extracts authentic post text and community discussions for Voice-of-Customer analysis.
+        """
+        post_body: Optional[str] = None
+        top_comments: List[str] = []
+        try:
+            html = self.browser_manager.fetch_page_content(
+                url,
+                wait_selector="shreddit-post, div[slot='text-body'], p",
+                delay_seconds=1.5,
+                timeout_ms=10000,
+            )
+            soup = BeautifulSoup(html, "html.parser")
+
+            # 1. Extract Post Body
+            body_slot = soup.find("div", attrs={"slot": "text-body"})
+            if not body_slot:
+                body_slot = soup.find("div", attrs={"data-click-id": "text_body"})
+            if not body_slot:
+                body_slot = soup.find("div", class_=re.compile(r"usertext-body|RichTextJSON-root", re.IGNORECASE))
+
+            if body_slot:
+                text_content = body_slot.get_text(" ", strip=True)
+                if text_content:
+                    post_body = text_content[:800]
+
+            # 2. Extract Top Comments
+            comment_elements = soup.find_all("shreddit-comment")
+            for c_el in comment_elements:
+                author = c_el.get("author", "").lower()
+                if "automoderator" in author or "bot" in author:
+                    continue
+
+                content_div = c_el.find("div", attrs={"slot": "comment"})
+                if not content_div:
+                    content_div = c_el.find("p")
+
+                if content_div:
+                    c_text = content_div.get_text(" ", strip=True)
+                    if c_text and len(c_text) >= 15 and "i am a bot" not in c_text.lower():
+                        clean_c = re.sub(r"\s{2,}", " ", c_text)[:300]
+                        top_comments.append(clean_c)
+                        if len(top_comments) >= 2:
+                            break
+
+            # Fallback for traditional layout
+            if not top_comments:
+                for c_box in soup.find_all("div", class_=re.compile(r"comment|entry", re.IGNORECASE))[:5]:
+                    p = c_box.find("p")
+                    if p:
+                        txt = p.get_text(" ", strip=True)
+                        if len(txt) >= 20 and "bot" not in txt.lower() and "moderator" not in txt.lower():
+                            top_comments.append(txt[:300])
+                            if len(top_comments) >= 2:
+                                break
+
+        except Exception as e:
+            logger.debug(f"Failed to scrape thread detail for '{url}': {e}")
+
+        return post_body, top_comments
+
     def collect(self, niche: Niche, use_cache: bool = True) -> List[Evidence]:
         if use_cache:
             cached_data = cache.get_raw(self.name, niche.name)
@@ -191,6 +254,18 @@ class RedditCollector(Collector):
                         seen_urls.add(item["source_url"])
                         all_posts.append(item)
 
+        # Deep scrape top 2 threads for real post body and comments
+        # Sort posts prioritizing those with known score
+        candidate_threads = sorted(
+            all_posts,
+            key=lambda x: (x.get("score") is not None, x.get("score") or 0),
+            reverse=True,
+        )
+        for target in candidate_threads[:2]:
+            body, comments = self._scrape_thread_detail(target["source_url"])
+            target["post_body"] = body
+            target["top_comments"] = comments
+
         # Convert to Evidence objects
         evidence_list: List[Evidence] = []
         for post in all_posts[: self.max_results]:
@@ -212,8 +287,18 @@ class RedditCollector(Collector):
             evidence_text = f"Thảo luận Reddit [r/{post['subreddit']}]: '{post['title']}'."
             if metrics_summary:
                 evidence_text += f" ({metrics_summary})"
-            if post.get("snippet"):
+
+            post_body = post.get("post_body")
+            top_comments = post.get("top_comments") or []
+
+            if post_body:
+                evidence_text += f"\n- Nội dung bài đăng: {post_body[:400]}"
+            elif post.get("snippet"):
                 evidence_text += f" — {post['snippet'][:250]}"
+
+            if top_comments:
+                comment_lines = "\n".join([f"  * Comment: \"{c}\"" for c in top_comments[:2]])
+                evidence_text += f"\n- Ý kiến thảo luận nổi bật:\n{comment_lines}"
 
             ev = Evidence(
                 source=self.name,
@@ -226,6 +311,8 @@ class RedditCollector(Collector):
                 post_id=post["post_id"],
                 title=post["title"],
                 snippet=post.get("snippet"),
+                post_body=post_body,
+                top_comments=top_comments,
             )
             evidence_list.append(ev)
 

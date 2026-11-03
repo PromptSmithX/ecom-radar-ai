@@ -74,7 +74,17 @@ class BrowserManager:
                 viewport={"width": 1366, "height": 768},
                 locale="en-US",
                 timezone_id="America/New_York",
+                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             )
+            # Normalize currency to USD for Amazon US scraping
+            try:
+                self._context.add_cookies([
+                    {"name": "i18n-prefs", "value": "USD", "domain": ".amazon.com", "path": "/"},
+                    {"name": "lc-main", "value": "en_US", "domain": ".amazon.com", "path": "/"},
+                ])
+            except Exception as e:
+                logger.debug(f"Could not preset Amazon cookies: {e}")
+
             self._context.add_init_script(STEALTH_INIT_SCRIPT)
             self._context.set_default_timeout(self.timeout_ms)
 

@@ -376,3 +376,77 @@ def test_report_renderer():
         tmp_out.rmdir()
     except Exception:
         pass
+
+
+def test_validator_sanitizes_idea_opportunity_fields(sample_evidence):
+    """Ensures validator properly sanitizes fabricated upvote counts across all new Idea fields."""
+    idea = Idea(
+        title="Custom Wallet (50 upvotes)",
+        what="Ví da thật khắc tên",
+        for_whom="Nam giới",
+        why_now="Mùa giáng sinh (100 upvotes)",
+        differentiation="Chất da vegetable-tanned bền bỉ (200 upvotes)",
+        target_price="$29 - $39",
+        suggested_channel="Etsy & TikTok Shop",
+        demand_proof="Google Trends tăng 150% (300 upvotes)",
+        pain_proof="Khách Reddit than phiền da PU bị bong tróc",
+        competitor_benchmark="Amazon bán $19 nhưng da PU chất lượng kém",
+        evidence_refs=[sample_evidence[0].source_url],
+    )
+    nr = NicheReport(
+        niche="Christmas gift ideas",
+        keywords=[],
+        trend="tăng",
+        analysis="Phân tích...",
+        customer="Khách hàng...",
+        pain_points=["Than phiền..."],
+        competition="Cao",
+        price_range="$20",
+        ideas=[idea],
+        score=7,
+    )
+    validated = ReportValidator.validate_niche_report(nr, sample_evidence)
+    v_idea = validated.ideas[0]
+
+    assert "50 upvotes" not in v_idea.title
+    assert "100 upvotes" not in v_idea.why_now
+    assert "200 upvotes" not in v_idea.differentiation
+    assert "300 upvotes" not in v_idea.demand_proof
+    assert v_idea.target_price == "$29 - $39"
+    assert v_idea.suggested_channel == "Etsy & TikTok Shop"
+    assert "da PU bị bong tróc" in v_idea.pain_proof
+
+
+def test_renderer_renders_product_opportunity_card():
+    """Validates that ReportRenderer includes all 3 validation pillars and USP sections."""
+    renderer = ReportRenderer()
+    final_report = FinalReport(
+        category="Quà tặng theo mùa",
+        date="03/11/2026",
+        niche_reports=[],
+        ranking=[RankingItem(rank=1, niche="Personalized Gift", score=9, reason="Nhu cầu cao")],
+        top_ideas=[
+            Idea(
+                title="Ví da nam khắc tên cá nhân",
+                what="Ví da bò thật kèm hộp quà sang trọng",
+                for_whom="Người mua quà tặng bạn trai, chồng",
+                why_now="Cao điểm mua sắm quà tặng Giáng sinh",
+                differentiation="Khắc tên miễn phí bằng công nghệ laser",
+                target_price="$35 (Margin 65%)",
+                suggested_channel="Etsy & TikTok Shop",
+                demand_proof="Keyword 'custom wallet' tăng +140% trên Trends",
+                pain_proof="Reddit r/gifts than phiền ví giá rẻ bị nổ da sau vài tuần",
+                competitor_benchmark="Amazon đối thủ bán $24.99 nhưng chỉ là da PU nhân tạo",
+                evidence_refs=["https://reddit.com/r/gifts/comments/123/"],
+            )
+        ],
+        cost_usd=0.01,
+    )
+    rendered = renderer.render(final_report)
+    assert "Ví da nam khắc tên cá nhân" in rendered
+    assert "Điểm khác biệt / Cải tiến (USP):" in rendered
+    assert "Khắc tên miễn phí bằng công nghệ laser" in rendered
+    assert "Kiểm chứng 3 trụ cột (Validation Dossier):" in rendered
+    assert "Keyword 'custom wallet' tăng +140% trên Trends" in rendered
+    assert "r/gifts than phiền ví giá rẻ bị nổ da" in rendered
+    assert "da PU nhân tạo" in rendered
