@@ -115,3 +115,38 @@ def test_collect_returns_authentic_evidence(sample_niche):
     assert first.source == "reddit"
     assert "150 upvotes" in first.text or "150 upvotes" in (first.value or "")
     assert first.source_url == "https://www.reddit.com/r/gifts/comments/post99/"
+
+
+def test_scrape_thread_detail_extracts_body_and_comments():
+    """Tests that _scrape_thread_detail extracts text body and top comments without bots."""
+    thread_html = """
+    <html><body>
+    <shreddit-post>
+        <div slot="text-body">
+            I am struggling to find high quality leather wallets that do not rip after 2 months of use.
+        </div>
+    </shreddit-post>
+    <shreddit-comment author="AutoModerator" score="1">
+        <div slot="comment">I am a bot, please read the rules.</div>
+    </shreddit-comment>
+    <shreddit-comment author="happy_shopper" score="120">
+        <div slot="comment">Buy full grain leather from small workshops on Etsy instead of cheap Amazon dropshippers!</div>
+    </shreddit-comment>
+    <shreddit-comment author="leather_fan" score="45">
+        <div slot="comment">Bellroy or Ridge are great, but overpriced. Look for handmade vegetable tanned leather.</div>
+    </shreddit-comment>
+    </body></html>
+    """
+    mock_browser = MagicMock()
+    mock_browser.fetch_page_content.return_value = thread_html
+
+    collector = RedditCollector(browser_manager=mock_browser)
+    body, comments = collector._scrape_thread_detail("https://www.reddit.com/r/gifts/comments/xyz123/leather_wallets/")
+
+    assert body is not None
+    assert "struggling to find high quality leather wallets" in body
+    assert len(comments) == 2
+    # Verify AutoModerator was excluded
+    assert not any("bot" in c.lower() for c in comments)
+    assert "Buy full grain leather from small workshops on Etsy" in comments[0]
+    assert "Bellroy or Ridge are great" in comments[1]

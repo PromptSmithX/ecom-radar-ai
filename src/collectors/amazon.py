@@ -146,6 +146,9 @@ class AmazonCollector(Collector):
                     value=price_text if price_text else None,
                     source_url=product_url,
                     title=title,
+                    rating=rating_text,
+                    review_count=review_count,
+                    badge=badge,
                 )
             )
 

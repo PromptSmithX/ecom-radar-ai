@@ -39,6 +39,12 @@ class MockLLMClient(LLMClient):
                             "what": "⚠️ Chạy với LLM thật để có ý tưởng sản phẩm thực sự",
                             "for_whom": "⚠️ Chưa xác định — cần dữ liệu thật",
                             "why_now": "⚠️ Chưa có tín hiệu thị trường thật",
+                            "differentiation": "⚠️ DỮ LIỆU MẪU — USP cải tiến",
+                            "target_price": "$25 - $35",
+                            "suggested_channel": "Amazon FBA",
+                            "demand_proof": "Dữ liệu mẫu",
+                            "pain_proof": "Dữ liệu mẫu",
+                            "competitor_benchmark": "Dữ liệu mẫu",
                             "evidence_refs": ["https://mock.example.com/placeholder-1"]
                         },
                         {
@@ -46,6 +52,12 @@ class MockLLMClient(LLMClient):
                             "what": "⚠️ Chạy với LLM thật để có ý tưởng sản phẩm thực sự",
                             "for_whom": "⚠️ Chưa xác định — cần dữ liệu thật",
                             "why_now": "⚠️ Chưa có tín hiệu thị trường thật",
+                            "differentiation": "⚠️ DỮ LIỆU MẪU — USP cải tiến",
+                            "target_price": "$19 - $29",
+                            "suggested_channel": "Etsy",
+                            "demand_proof": "Dữ liệu mẫu",
+                            "pain_proof": "Dữ liệu mẫu",
+                            "competitor_benchmark": "Dữ liệu mẫu",
                             "evidence_refs": ["https://mock.example.com/placeholder-2"]
                         },
                         {
@@ -53,6 +65,12 @@ class MockLLMClient(LLMClient):
                             "what": "⚠️ Chạy với LLM thật để có ý tưởng sản phẩm thực sự",
                             "for_whom": "⚠️ Chưa xác định — cần dữ liệu thật",
                             "why_now": "⚠️ Chưa có tín hiệu thị trường thật",
+                            "differentiation": "⚠️ DỮ LIỆU MẪU — USP cải tiến",
+                            "target_price": "$30 - $45",
+                            "suggested_channel": "Shopify DTC",
+                            "demand_proof": "Dữ liệu mẫu",
+                            "pain_proof": "Dữ liệu mẫu",
+                            "competitor_benchmark": "Dữ liệu mẫu",
                             "evidence_refs": ["https://mock.example.com/placeholder-3"]
                         }
                     ]
@@ -92,6 +110,12 @@ class MockLLMClient(LLMClient):
                             "what": "⚠️ Chạy với LLM thật để có ý tưởng sản phẩm thực sự",
                             "for_whom": "⚠️ Chưa xác định",
                             "why_now": "⚠️ Chưa có tín hiệu thị trường thật",
+                            "differentiation": "⚠️ DỮ LIỆU MẪU — USP cải tiến",
+                            "target_price": "$20 - $30",
+                            "suggested_channel": "Amazon / Etsy",
+                            "demand_proof": "Dữ liệu mẫu",
+                            "pain_proof": "Dữ liệu mẫu",
+                            "competitor_benchmark": "Dữ liệu mẫu",
                             "evidence_refs": ["https://mock.example.com/niche-placeholder"]
                         }
                     ],

@@ -74,6 +74,8 @@ def test_parses_title_price_rating_and_badge(sample_niche, cleanup_amazon_cooldo
     assert first.value == "$19.99"
     assert "Personalized Family Name Ornament" in first.text
     assert "Best Seller" in first.text or "Amazon's Choice" in first.text
+    assert first.rating == "4.7 out of 5 stars"
+    assert first.badge == "Amazon's Choice"
     assert first.source_url == "https://www.amazon.com/dp/B000TEST1/ref=sr_1_1"
 
     second = results[1]

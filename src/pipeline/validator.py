@@ -163,6 +163,20 @@ class ReportValidator:
             idea.what = cls._sanitize_fabricated_upvotes(idea.what, authentic_upvotes)
             idea.for_whom = cls._sanitize_fabricated_upvotes(idea.for_whom, authentic_upvotes)
             idea.why_now = cls._sanitize_fabricated_upvotes(idea.why_now, authentic_upvotes)
+
+            if idea.differentiation:
+                idea.differentiation = cls._sanitize_fabricated_upvotes(idea.differentiation, authentic_upvotes)
+            if idea.target_price:
+                idea.target_price = cls._sanitize_fabricated_upvotes(idea.target_price, authentic_upvotes)
+            if idea.suggested_channel:
+                idea.suggested_channel = cls._sanitize_fabricated_upvotes(idea.suggested_channel, authentic_upvotes)
+            if idea.demand_proof:
+                idea.demand_proof = cls._sanitize_fabricated_upvotes(idea.demand_proof, authentic_upvotes)
+            if idea.pain_proof:
+                idea.pain_proof = cls._sanitize_fabricated_upvotes(idea.pain_proof, authentic_upvotes)
+            if idea.competitor_benchmark:
+                idea.competitor_benchmark = cls._sanitize_fabricated_upvotes(idea.competitor_benchmark, authentic_upvotes)
+
             cleaned_ideas.append(idea)
 
         # Ensure at least 2 ideas with transparent, honest rationale
@@ -181,6 +195,12 @@ class ReportValidator:
                     what=f"Sản phẩm quà tặng mang tính ứng dụng cao hoặc có yếu tố cá nhân hóa dành riêng cho dịp {report.niche}",
                     for_whom=f"Khách hàng có kế hoạch chuẩn bị và tìm kiếm quà tặng sớm cho {report.niche}",
                     why_now=why_now_text,
+                    differentiation="Thiết kế đóng gói cao cấp kèm thiệp cá nhân hóa khắc phục tình trạng quà tặng thiếu chỉn chu",
+                    target_price="$25 - $35",
+                    suggested_channel="Etsy / Shopify",
+                    demand_proof="Nhu cầu tìm kiếm quà tặng gia tăng vào dịp cao điểm",
+                    pain_proof="Khách hàng mong muốn quà tặng vừa thiết thực vừa mang dấu ấn cá nhân",
+                    competitor_benchmark="Các sản phẩm đại trà trên thị trường thiếu bao bì quà tặng chuyên nghiệp",
                     evidence_refs=[default_fallback_url] if valid_urls else [],
                 )
             )
